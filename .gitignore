@@ -1,0 +1,28 @@
+# OS clutter
+.DS_Store
+**/.DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Local environments
+.venv/
+.venv*/
+venv/
+env/
+
+# Tool output
+debug_crops/
+test_voice.wav
+test_voice_base.wav
+
+# Temporary local scratch files in the project root
+/accessible
+/direction
+/do
+/follow
+/pedestrian
+/restroom
+/stop
+/use

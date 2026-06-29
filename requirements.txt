@@ -1,0 +1,5 @@
+opencv-python
+numpy
+pytesseract
+SpeechRecognition
+faster-whisper
