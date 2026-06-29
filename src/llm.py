@@ -1,7 +1,7 @@
 from .intent import Intent
 from .ollama_client import generate
 from .ocr import read_text
-from .plant_id import describe_plant, identify_plant
+from .plant_id import PlantIdResult, describe_plant, identify_plant
 from .vision_llm import analyze_image_with_gemma
 
 
@@ -82,14 +82,45 @@ If unclear, say: I can see what may be a sign, but I cannot read or interpret it
 Do not explain noisy OCR text.
 """
     else:
+        if isinstance(plant_id, PlantIdResult) and not plant_id.success:
+            plant_id_payload = {
+                "provider": plant_id.provider,
+                "success": plant_id.success,
+                "common_name": plant_id.common_name,
+                "scientific_name": plant_id.scientific_name,
+                "family": plant_id.family,
+                "genus": plant_id.genus,
+                "score": plant_id.score,
+                "confidence_level": plant_id.confidence_level,
+                "raw_top_result": plant_id.raw_top_result,
+                "error": plant_id.error,
+            }
+        elif isinstance(plant_id, PlantIdResult):
+            plant_id_payload = {
+                "provider": plant_id.provider,
+                "success": plant_id.success,
+                "common_name": plant_id.common_name,
+                "scientific_name": plant_id.scientific_name,
+                "family": plant_id.family,
+                "genus": plant_id.genus,
+                "score": plant_id.score,
+                "confidence_level": plant_id.confidence_level,
+                "raw_top_result": plant_id.raw_top_result,
+                "error": plant_id.error,
+            }
+        else:
+            plant_id_payload = plant_id
+        vision_description = (image_analysis or {}).get("description") or ""
         prompt = f"""
 {RULES}
 Detected kind: {kind}
 Dialogue action: {intent.value}
 Gemma image analysis JSON: {image_analysis}
-Plant ID result: {plant_id}
-If plant ID has a confident common name, say what it appears to be and give one short useful note.
-If species is not confirmed, say the exact type is uncertain and offer to describe what is visible.
+Plant ID result: {plant_id_payload}
+Vision description: {vision_description}
+If plant ID has a high-confidence common name, say "This appears to be [common name]. It is a [short plain-language description]. Would you like more detail?"
+If plant ID has medium confidence, say it may be [common name], but you are not fully certain.
+If plant ID is low confidence or unavailable, say the exact type is uncertain and describe what is visible.
 Do not invent a species.
 """
     model = getattr(config, "final_response_model", "gemma3:4b")

@@ -27,6 +27,11 @@ class Config:
     ollama_image_timeout: int = 180
     plant_id_provider: str = "plantnet"
     plantnet_api_key: str = ""
+    plantnet_project: str = "all"
+    plantnet_lang: str = "en"
+    plantnet_organ: str = "auto"
+    plantnet_min_confidence: float = 0.45
+    plantnet_high_confidence: float = 0.70
     use_plant_id: bool = False
     mic_device_index: int = 0
     mic_listen_timeout: int = 12
@@ -55,6 +60,11 @@ class Config:
             ollama_image_timeout=int(os.getenv("OLLAMA_IMAGE_TIMEOUT", "180")),
             plant_id_provider=os.getenv("PLANT_ID_PROVIDER", "plantnet"),
             plantnet_api_key=plantnet_api_key,
+            plantnet_project=os.getenv("PLANTNET_PROJECT", "all"),
+            plantnet_lang=os.getenv("PLANTNET_LANG", "en"),
+            plantnet_organ=os.getenv("PLANTNET_ORGAN", "auto"),
+            plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.45")),
+            plantnet_high_confidence=float(os.getenv("PLANTNET_HIGH_CONFIDENCE", "0.70")),
             use_plant_id=env_bool("USE_PLANT_ID", bool(plantnet_api_key)),
             mic_device_index=mic_device_index if mic_device_index is not None else int(os.getenv("MIC_DEVICE_INDEX", "0")),
             mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", "12")),

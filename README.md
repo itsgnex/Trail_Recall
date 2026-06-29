@@ -70,7 +70,33 @@ Gemma 3 1B handles fast dialogue routing. Gemma 3 4B is used only after the dwel
 
 When a trigger fires, the app saves the current crop in `debug_crops/` and sends that crop to Gemma 3 4B for sign or plant analysis after the user confirms.
 
-Plant ID is optional. If `PLANTNET_API_KEY` is empty, plant species identification is skipped and Gemma/fallback responses clearly say the exact type is uncertain.
+## PlantNet
+
+Plant species identification is optional. Set your key before running:
+
+```bash
+export PLANTNET_API_KEY="your_key_here"
+```
+
+If you want to force PlantNet on, set:
+
+```bash
+USE_PLANT_ID=true
+PLANT_ID_PROVIDER=plantnet
+PLANTNET_PROJECT=all
+PLANTNET_LANG=en
+PLANTNET_ORGAN=auto
+PLANTNET_MIN_CONFIDENCE=0.45
+PLANTNET_HIGH_CONFIDENCE=0.70
+```
+
+Confidence guide:
+
+- `>= 0.70`: high confidence
+- `0.45` to `< 0.70`: possible, but not certain
+- `< 0.45`: do not claim the exact species
+
+If `PLANTNET_API_KEY` is empty, plant species identification is skipped and Gemma/fallback responses clearly say the exact type is uncertain.
 
 CLIP/OpenCLIP is optional. If `open_clip` or PyTorch is missing or not compatible with your Python version, the app prints one warning and falls back to OCR plus simple image heuristics. On Python 3.13, PyTorch/OpenCLIP wheels may be limited; the prototype still starts without them.
 
