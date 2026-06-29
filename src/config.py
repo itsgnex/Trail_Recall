@@ -39,7 +39,10 @@ class Config:
     mic_ambient_noise_duration: float = 1.0
     use_whisper_stt: bool = True
     whisper_model: str = "small.en"
-    whisper_record_seconds: int = 7
+    whisper_record_seconds: int = 5
+    whisper_short_reply_mode: bool = True
+    whisper_use_vad: bool = False
+    whisper_initial_prompt: str = "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that"
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
@@ -72,5 +75,11 @@ class Config:
             mic_ambient_noise_duration=float(os.getenv("MIC_AMBIENT_NOISE_DURATION", "1")),
             use_whisper_stt=env_bool("USE_WHISPER_STT", True),
             whisper_model=os.getenv("WHISPER_MODEL", "small.en"),
-            whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", "7")),
+            whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", "5")),
+            whisper_short_reply_mode=env_bool("WHISPER_SHORT_REPLY_MODE", True),
+            whisper_use_vad=env_bool("WHISPER_USE_VAD", False),
+            whisper_initial_prompt=os.getenv(
+                "WHISPER_INITIAL_PROMPT",
+                "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that",
+            ),
         )

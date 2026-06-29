@@ -23,7 +23,12 @@ def transcribe_with_whisper(audio, config):
         with tempfile.NamedTemporaryFile(suffix=".wav") as wav:
             wav.write(audio.get_wav_data())
             wav.flush()
-            segments, _ = _whisper_model.transcribe(wav.name, language="en")
+            segments, _ = _whisper_model.transcribe(
+                wav.name,
+                language="en",
+                vad_filter=bool(getattr(config, "whisper_use_vad", False)),
+                initial_prompt=getattr(config, "whisper_initial_prompt", None),
+            )
             return " ".join(segment.text.strip() for segment in segments).strip()
     except Exception as exc:
         if not _whisper_warned:
@@ -32,7 +37,7 @@ def transcribe_with_whisper(audio, config):
         return ""
 
 
-def listen(config=None):
+def _record_audio(config, phrase_time_limit):
     try:
         import speech_recognition as sr
 
@@ -43,11 +48,45 @@ def listen(config=None):
             print(f"using microphone: {names[device_index]}")
         with sr.Microphone(device_index=device_index) as source:
             timeout = getattr(config, "mic_listen_timeout", 12)
-            print(f"listening for up to {timeout} seconds...")
+            print(f"recording for {phrase_time_limit} seconds...")
             recognizer.adjust_for_ambient_noise(source, duration=getattr(config, "mic_ambient_noise_duration", 1))
-            audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=getattr(config, "whisper_record_seconds", 7))
+            audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+        return audio
+    except Exception as exc:
+        print(f"Microphone speech input unavailable: {exc}")
+        print("Type your response instead, or allow microphone permission on macOS and install PyAudio.")
+        try:
+            return input("> ")
+        except EOFError:
+            return ""
+
+
+def listen(config=None):
+    short_mode = bool(getattr(config, "whisper_short_reply_mode", True))
+    record_seconds = int(getattr(config, "whisper_record_seconds", 5))
+
+    audio = _record_audio(config, record_seconds)
+    if isinstance(audio, str):
+        return audio
+
+    text = transcribe_with_whisper(audio, config)
+    if text:
+        return text
+
+    if short_mode:
+        print("short reply retry...")
+        audio = _record_audio(config, 3)
+        if isinstance(audio, str):
+            return audio
         text = transcribe_with_whisper(audio, config)
-        return text or recognizer.recognize_google(audio)
+        if text:
+            return text
+
+    try:
+        import speech_recognition as sr
+
+        recognizer = sr.Recognizer()
+        return recognizer.recognize_google(audio)
     except Exception as exc:
         print(f"Microphone speech input unavailable: {exc}")
         print("Type your response instead, or allow microphone permission on macOS and install PyAudio.")

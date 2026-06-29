@@ -9,6 +9,14 @@ from src.config import Config
 from src.intent import Intent, classify_intent_with_source
 from src.llm import answer_for
 from src.ocr import read_text
+from src.phrases import (
+    get_cancel_response,
+    get_clarification_response,
+    get_prompt,
+    get_repeat_response,
+    get_unclear_plant_response,
+    get_unclear_sign_response,
+)
 from src.speech_in import listen
 from src.speech_out import speak
 from src.trigger import DwellTrigger
@@ -25,9 +33,11 @@ def save_debug_crop(kind, crop):
 def handle_trigger(kind, crop, config):
     save_debug_crop(kind, crop)
     if kind == "plant":
-        prompt = "I noticed you may be looking at a plant. Would you like me to explain it?"
+        prompt = get_prompt("plant")
+    elif kind == "sign":
+        prompt = get_prompt("sign")
     else:
-        prompt = "I noticed you may be looking at a sign. Would you like me to read or explain it?"
+        prompt = get_prompt("unclear")
 
     speak(prompt)
     heard = listen(config)
@@ -36,19 +46,20 @@ def handle_trigger(kind, crop, config):
     print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
 
     if intent == Intent.REPEAT_LAST_MESSAGE:
+        speak(get_repeat_response())
         speak(prompt)
         heard = listen(config)
         intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text)
         print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
 
     if intent == Intent.CANCEL:
-        speak("All right. I will wait.")
+        speak(get_cancel_response())
         return
     if intent == Intent.ASK_CLARIFICATION:
-        speak("I am sorry, I was not sure what you wanted. Would you like me to help with this?")
+        speak(get_clarification_response())
         return
     if intent == Intent.SPEAK_SLOWER:
-        speak("Of course. I will keep it slower and brief.")
+        speak("Of course. I’ll keep it slower and brief.")
 
     answer = answer_for(kind, crop, intent, config)
     speak(answer)
