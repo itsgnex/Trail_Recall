@@ -19,6 +19,14 @@ debug_crops/
 test_voice.wav
 test_voice_base.wav
 
+# Common local caches and logs
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+*.log
+
 # Temporary local scratch files in the project root
 /accessible
 /direction
