@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 import json
-import urllib.parse
-import urllib.request
+from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
+import requests
 
 
 @dataclass
@@ -50,7 +51,7 @@ def identify_plant(crop, config):
         return PlantIdResult(error="PlantNet disabled")
     if not api_key:
         if not _warned_unavailable:
-            print("plant id: unavailable, using vision description fallback")
+            print("plant id: unavailable, API key missing")
             _warned_unavailable = True
         return PlantIdResult(success=False, error="PlantNet API key missing")
 
@@ -63,26 +64,23 @@ def identify_plant(crop, config):
         project = getattr(config, "plantnet_project", "all")
         lang = getattr(config, "plantnet_lang", "en")
         organ = getattr(config, "plantnet_organ", "auto")
-        query = urllib.parse.urlencode({"api-key": api_key, "lang": lang})
-        url = f"https://my-api.plantnet.org/v2/identify/{project}?{query}"
-        boundary = "----metra-live-plantnet"
-        body = (
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="images"; filename="crop.jpg"\r\n'
-            "Content-Type: image/jpeg\r\n\r\n"
-        ).encode() + payload + (
-            f"\r\n--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="organs"\r\n\r\n{organ}\r\n'
-            f"--{boundary}--\r\n"
-        ).encode()
-        request = urllib.request.Request(
-            url,
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode())
+        url = f"https://my-api.plantnet.org/v2/identify/{project}?api-key={api_key}"
+        print(f"plant id: endpoint=https://my-api.plantnet.org/v2/identify/{project}?api-key=REDACTED")
+        params = {"lang": lang, "nb-results": 3}
+        files = {"images": ("crop.jpg", payload, "image/jpeg")}
+        data = {"organs": organ or "auto"}
+        response = requests.post(url, params=params, files=files, data=data, timeout=30)
+        if response.status_code == 401 or response.status_code == 403:
+            print("plant id: unauthorized, check PlantNet API key")
+            return PlantIdResult(success=False, error=f"PlantNet unauthorized ({response.status_code})")
+        if response.status_code == 404:
+            print("plant id: endpoint or project not found")
+            return PlantIdResult(success=False, error="PlantNet endpoint or project not found")
+        if response.status_code == 429:
+            print("plant id: rate limit reached")
+            return PlantIdResult(success=False, error="PlantNet rate limit reached")
+        response.raise_for_status()
+        data = response.json()
 
         result = (data.get("results") or [{}])[0]
         species = result.get("species") or {}
@@ -113,5 +111,26 @@ def describe_plant(crop):
     green = cv2.inRange(hsv, (30, 35, 35), (90, 255, 255))
     green_ratio = float(np.count_nonzero(green)) / green.size
     if green_ratio > 0.18:
-        return "This may be a plant, but I am not certain of the exact type. I can describe what I see or give more detail if you would like."
+        return "This may be a plant, but I am not certain of the exact type."
     return "I am not certain this is a plant from the camera view. Try holding it in the center with better light."
+
+
+if __name__ == "__main__":
+    from .config import Config
+
+    if len(sys.argv) != 2:
+        print("usage: python -m src.plant_id path/to/image.jpg")
+        raise SystemExit(1)
+
+    image_path = Path(sys.argv[1])
+    if not image_path.exists():
+        print(f"file not found: {image_path}")
+        raise SystemExit(1)
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        print(f"unable to read image: {image_path}")
+        raise SystemExit(1)
+
+    result = identify_plant(image, Config.from_env())
+    print(json.dumps(result.__dict__, indent=2))

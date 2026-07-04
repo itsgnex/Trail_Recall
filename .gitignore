@@ -11,6 +11,8 @@ __pycache__/
 .venv*/
 venv/
 env/
+.env
+*.env
 
 # Tool output
 debug_crops/

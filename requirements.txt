@@ -3,3 +3,5 @@ numpy
 pytesseract
 SpeechRecognition
 faster-whisper
+python-dotenv
+requests

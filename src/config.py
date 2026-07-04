@@ -1,9 +1,20 @@
 from dataclasses import dataclass
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def env_bool(name, default):
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_list(name, default):
+    value = os.getenv(name)
+    if not value:
+        return tuple(default)
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
 
 
 @dataclass(frozen=True)
@@ -43,6 +54,39 @@ class Config:
     whisper_short_reply_mode: bool = True
     whisper_use_vad: bool = False
     whisper_initial_prompt: str = "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that"
+    follow_up_mode: bool = True
+    follow_up_timeout_seconds: int = 8
+    max_follow_up_turns: int = 1
+    speak_follow_up_offer: bool = False
+    follow_up_silence_returns_to_scan: bool = True
+    voice_activation_mode: bool = True
+    wake_mode: bool = True
+    wake_phrases: tuple[str, ...] = (
+        "hey trail",
+        "okay trail",
+        "trail recall",
+        "hey assistant",
+        "hey glasses",
+    )
+    wake_listen_seconds: float = 2.5
+    command_record_seconds: int = 6
+    wake_cooldown_seconds: int = 2
+    pause_wake_during_tts: bool = True
+    allow_single_word_wake: bool = False
+    wake_debug_transcripts: bool = True
+    wake_log_empty_transcripts: bool = False
+    wake_min_transcript_length: int = 2
+    voice_command_mode: bool = True
+    allow_general_questions: bool = True
+    general_question_model: str = "gemma3:1b"
+    image_task_model: str = "gemma3:4b"
+    sign_memory_enabled: bool = True
+    sign_memory_max_items: int = 30
+    sign_memory_ttl_seconds: int = 600
+    sign_clip_duplicate_threshold: float = 0.88
+    sign_clip_possible_duplicate_threshold: float = 0.82
+    sign_gemma_verify_duplicates: bool = True
+    sign_duplicate_suppress_seconds: int = 180
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
@@ -68,7 +112,7 @@ class Config:
             plantnet_organ=os.getenv("PLANTNET_ORGAN", "auto"),
             plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.45")),
             plantnet_high_confidence=float(os.getenv("PLANTNET_HIGH_CONFIDENCE", "0.70")),
-            use_plant_id=env_bool("USE_PLANT_ID", bool(plantnet_api_key)),
+            use_plant_id=env_bool("USE_PLANT_ID", False),
             mic_device_index=mic_device_index if mic_device_index is not None else int(os.getenv("MIC_DEVICE_INDEX", "0")),
             mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", "12")),
             mic_phrase_time_limit=int(os.getenv("MIC_PHRASE_TIME_LIMIT", "7")),
@@ -82,4 +126,42 @@ class Config:
                 "WHISPER_INITIAL_PROMPT",
                 "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that",
             ),
+            follow_up_mode=env_bool("FOLLOW_UP_MODE", True),
+            follow_up_timeout_seconds=int(os.getenv("FOLLOW_UP_TIMEOUT_SECONDS", "8")),
+            max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "1")),
+            speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
+            follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
+            voice_activation_mode=env_bool("VOICE_ACTIVATION_MODE", True),
+            wake_mode=env_bool("WAKE_MODE", True),
+            wake_phrases=env_list(
+                "WAKE_PHRASES",
+                (
+                    "hey trail",
+                    "trail",
+                    "trail recall",
+                    "hey assistant",
+                    "assistant",
+                    "hey glasses",
+                    "can you help",
+                ),
+            ),
+            wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", "2.5")),
+            command_record_seconds=int(os.getenv("COMMAND_RECORD_SECONDS", "6")),
+            wake_cooldown_seconds=int(os.getenv("WAKE_COOLDOWN_SECONDS", "2")),
+            pause_wake_during_tts=env_bool("PAUSE_WAKE_DURING_TTS", True),
+            allow_single_word_wake=env_bool("ALLOW_SINGLE_WORD_WAKE", False),
+            wake_debug_transcripts=env_bool("WAKE_DEBUG_TRANSCRIPTS", True),
+            wake_log_empty_transcripts=env_bool("WAKE_LOG_EMPTY_TRANSCRIPTS", False),
+            wake_min_transcript_length=int(os.getenv("WAKE_MIN_TRANSCRIPT_LENGTH", "2")),
+            voice_command_mode=env_bool("VOICE_COMMAND_MODE", True),
+            allow_general_questions=env_bool("ALLOW_GENERAL_QUESTIONS", True),
+            general_question_model=os.getenv("GENERAL_QUESTION_MODEL", "gemma3:1b"),
+            image_task_model=os.getenv("IMAGE_TASK_MODEL", "gemma3:4b"),
+            sign_memory_enabled=env_bool("SIGN_MEMORY_ENABLED", True),
+            sign_memory_max_items=int(os.getenv("SIGN_MEMORY_MAX_ITEMS", "30")),
+            sign_memory_ttl_seconds=int(os.getenv("SIGN_MEMORY_TTL_SECONDS", "600")),
+            sign_clip_duplicate_threshold=float(os.getenv("SIGN_CLIP_DUPLICATE_THRESHOLD", "0.88")),
+            sign_clip_possible_duplicate_threshold=float(os.getenv("SIGN_CLIP_POSSIBLE_DUPLICATE_THRESHOLD", "0.82")),
+            sign_gemma_verify_duplicates=env_bool("SIGN_GEMMA_VERIFY_DUPLICATES", True),
+            sign_duplicate_suppress_seconds=int(os.getenv("SIGN_DUPLICATE_SUPPRESS_SECONDS", "180")),
         )

@@ -4,28 +4,50 @@ Phase 1 Mac-only webcam prototype.
 
 ## Run
 
+Use the checked-in virtualenv if available:
+
 ```bash
-python --version
-python -m pip install -r requirements.txt
-python -m py_compile main.py
-python main.py
+./.venv312/bin/python --version
+./.venv312/bin/python -m pip install -r requirements.txt
+./.venv312/bin/python -m py_compile main.py
 ```
 
+### Camera-only demo mode
+
+This is the simplest way to open the camera and see a clear ready signal:
+
+```bash
+./.venv312/bin/python main.py --camera 2 --camera-only
+```
+
+You should see:
+- a camera window
+- a big `READY - camera-only demo` banner on the video
+- `READY: camera-only preview is live. Press q to quit.` in the terminal
+
 Press `q` in the camera window to quit.
+
+### Full mode with mic
+
+If you want the normal assistant flow:
+
+```bash
+./.venv312/bin/python main.py --camera 2 --mic 0
+```
 
 Run without a camera flag to scan indexes 0 through 10, preview available cameras, and choose one:
 
 ```bash
-python main.py
+./.venv312/bin/python main.py
 ```
 
 Or open a camera directly:
 
 ```bash
-python main.py --camera 0
-python main.py --camera 1
-python main.py --camera 2
-python main.py --camera 2 --mic 0
+./.venv312/bin/python main.py --camera 0
+./.venv312/bin/python main.py --camera 1
+./.venv312/bin/python main.py --camera 2
+./.venv312/bin/python main.py --camera 2 --mic 0
 ```
 
 ## Optional AI
@@ -58,6 +80,12 @@ WHISPER_RECORD_SECONDS=7
 WHISPER_SHORT_REPLY_MODE=true
 WHISPER_USE_VAD=false
 WHISPER_INITIAL_PROMPT=yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that
+FOLLOW_UP_MODE=true
+FOLLOW_UP_TIMEOUT_SECONDS=8
+MAX_FOLLOW_UP_TURNS=1
+SPEAK_FOLLOW_UP_OFFER=false
+FOLLOW_UP_SILENCE_RETURNS_TO_SCAN=true
+WAKE_MODE=false
 PLANT_ID_PROVIDER=plantnet
 PLANTNET_API_KEY=
 USE_PLANT_ID=false
@@ -78,12 +106,13 @@ When a trigger fires, the app saves the current crop in `debug_crops/` and sends
 Plant species identification is optional. Set your key before running:
 
 ```bash
-export PLANTNET_API_KEY="your_key_here"
+cp .env.example .env
 ```
 
-If you want to force PlantNet on, set:
+Then edit `.env` and add your real key:
 
 ```bash
+PLANTNET_API_KEY=your_real_key_here
 USE_PLANT_ID=true
 PLANT_ID_PROVIDER=plantnet
 PLANTNET_PROJECT=all
@@ -93,6 +122,12 @@ PLANTNET_MIN_CONFIDENCE=0.45
 PLANTNET_HIGH_CONFIDENCE=0.70
 ```
 
+Direct PlantNet test:
+
+```bash
+python -m src.plant_id debug_crops/plant_example.jpg
+```
+
 Confidence guide:
 
 - `>= 0.70`: high confidence
@@ -100,6 +135,8 @@ Confidence guide:
 - `< 0.45`: do not claim the exact species
 
 If `PLANTNET_API_KEY` is empty, plant species identification is skipped and Gemma/fallback responses clearly say the exact type is uncertain.
+
+Follow-up listening uses a configurable timeout because older-adult voice interaction research suggests response timing should be adjustable. The prototype defaults to 8 seconds and can be tested at 6, 8, or 10 seconds during evaluation.
 
 CLIP/OpenCLIP is optional. If `open_clip` or PyTorch is missing or not compatible with your Python version, the app prints one warning and falls back to OCR plus simple image heuristics. On Python 3.13, PyTorch/OpenCLIP wheels may be limited; the prototype still starts without them.
 

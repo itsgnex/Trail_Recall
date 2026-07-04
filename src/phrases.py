@@ -85,6 +85,12 @@ _CLARIFY = [
     "I’m not sure if you wanted me to continue. Should I explain it?",
 ]
 
+_WAKE_CHECK = [
+    "Yes, I can hear you. What would you like me to look at?",
+    "Yes, I’m listening. What would you like me to check?",
+    "I can hear you. Please tell me what you want me to look at.",
+]
+
 _UNCLEAR_SIGN = [
     "I can see what may be a sign, but I cannot read it clearly. Please hold it a little steadier.",
     "The sign is not clear enough for me to read. Try moving a little closer.",
@@ -109,6 +115,19 @@ _UNCLEAR_PLANT = [
     "I may need a closer image of the leaves or flowers to identify this plant.",
     "The plant is visible, but the exact type is uncertain.",
     "I can describe what I see, but I cannot name the plant confidently yet.",
+]
+
+_FOLLOW_UP_OFFER = [
+    "I can give a little more detail if you want.",
+    "I can explain more if that would help.",
+    "I can tell you a bit more about it.",
+    "I can give one more detail if you want.",
+]
+
+_FOLLOW_UP_MISSED = [
+    "I didn’t catch that. I’ll go back to watching quietly.",
+    "I didn’t hear anything clearly, so I’ll keep watching.",
+    "No problem, I’ll keep watching.",
 ]
 
 
@@ -136,9 +155,21 @@ def get_clarification_response():
     return _pick("clarify", _CLARIFY)
 
 
+def get_wake_check_response():
+    return _pick("wake_check", _WAKE_CHECK)
+
+
 def get_unclear_sign_response():
     return _pick("unclear_sign", _UNCLEAR_SIGN)
 
 
 def get_unclear_plant_response():
     return _pick("unclear_plant", _UNCLEAR_PLANT)
+
+
+def get_follow_up_offer():
+    return _pick("follow_up_offer", _FOLLOW_UP_OFFER)
+
+
+def get_follow_up_missed_response():
+    return _pick("follow_up_missed", _FOLLOW_UP_MISSED)

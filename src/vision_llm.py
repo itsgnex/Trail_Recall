@@ -14,11 +14,17 @@ def crop_to_base64(crop):
     return base64.b64encode(encoded).decode() if ok else ""
 
 
+def path_to_base64(image_path):
+    image = cv2.imread(str(image_path))
+    return crop_to_base64(image) if image is not None else ""
+
+
 def analyze_image_with_gemma(crop, detected_kind, user_action, config, ocr_text="", clip_confidence=None):
     image = crop_to_base64(crop)
     if not image:
         return None
-    print(f"sending crop to vision model {config.vision_llm_model}")
+    model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:4b"))
+    print(f"sending crop to vision model {model}")
     prompt = f"""
 Look only at the provided image crop.
 Do not invent details.
@@ -42,7 +48,7 @@ Return: {{"image_type":"symbol_sign","visible_text":null,"symbol_or_icon":"walki
 
 Example 2:
 Image: red octagon with STOP
-Return: {{"image_type":"text_sign","visible_text":"STOP","symbol_or_icon":"red octagon","description":"A red stop sign.","plain_meaning":"You should stop before continuing.","recommended_action":"Stop and check before moving ahead.","is_clear_enough":true,"confidence":0.95,"uncertain":false}}
+Return: {{"image_type":"text_sign","visible_text":"STOP","symbol_or_icon":"red octagon","description":"A red stop sign.","plain_meaning":"This appears to be a stop sign. Please stop here and check carefully before continuing.","recommended_action":"Please stop here and check carefully before continuing.","is_clear_enough":true,"confidence":0.95,"uncertain":false}}
 
 Example 3:
 Image: black arrow on sign
@@ -54,8 +60,39 @@ Context:
 - ocr_text: {(ocr_text or None)!r}
 - clip_confidence: {clip_confidence}
 """
-    data = generate_json(prompt, config, timeout=config.ollama_image_timeout, model=config.vision_llm_model, images=[image])
+    data = generate_json(prompt, config, timeout=config.ollama_image_timeout, model=model, images=[image])
     if not data:
         return None
     print(f'vision llm: {data.get("image_type")}, visible_text="{data.get("visible_text")}", confidence={data.get("confidence")}')
+    return data
+
+
+def verify_same_sign(current_crop_path, previous_memory, config):
+    if previous_memory is None:
+        return {"same_sign": False, "reason": "no previous sign memory", "confidence": 0.0}
+
+    current_image = path_to_base64(current_crop_path)
+    previous_image = path_to_base64(previous_memory.get("crop_path"))
+    model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:4b"))
+    print(f"sign memory: verifying duplicate with {model}")
+
+    prompt = f"""
+You are comparing a current sign image against a previously seen sign. Decide if they are the same physical sign or effectively the same sign content. Return strict JSON only.
+If uncertain, return same_sign=false.
+Previous sign memory:
+- visible_text: {(previous_memory.get("visible_text") or None)!r}
+- symbol_or_icon: {(previous_memory.get("symbol_or_icon") or None)!r}
+- plain_meaning: {(previous_memory.get("plain_meaning") or None)!r}
+- description: {(previous_memory.get("description") or None)!r}
+- final_answer: {(previous_memory.get("final_answer") or None)!r}
+Return:
+{{"same_sign": true, "reason": "Both appear to be the same sign.", "confidence": 0.92}}
+"""
+    images = [image for image in (current_image, previous_image) if image]
+    if images:
+        data = generate_json(prompt, config, timeout=getattr(config, "ollama_image_timeout", 180), model=model, images=images)
+    else:
+        data = generate_json(prompt, config, timeout=getattr(config, "ollama_text_timeout", 60), model=model)
+    if not data:
+        return {"same_sign": False, "reason": "no model result", "confidence": 0.0}
     return data
