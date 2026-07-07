@@ -119,6 +119,29 @@ Context:
     return data
 
 
+def verify_plant_candidate(crop, config):
+    image = crop_to_base64(crop)
+    if not image:
+        return {"is_plant": False, "confidence": 0.0, "object_type": "unknown", "reason": "no image"}
+
+    prompt = """
+Look only at the provided camera crop.
+Decide whether the main centered object is a real living plant or a clearly visible plant part such as leaves, stems, flowers, or a potted plant.
+Reject water bottles, cups, plastic objects, posters, printed pictures, screens, clothing, signs, people, furniture, and random green or blue objects.
+Do not treat a plant picture, plant label, or decorative pattern as a real plant.
+If unsure, return is_plant false.
+Return strict JSON only:
+{"is_plant": false, "object_type": "water bottle", "reason": "The centered object is a bottle, not plant leaves or flowers.", "confidence": 0.95}
+"""
+    data = _openrouter_json(prompt, config, images=[image], label="plant verify")
+    if not data:
+        data = _local_json(prompt, config, images=[image])
+    if not data:
+        return {"is_plant": False, "confidence": 0.0, "object_type": "unknown", "reason": "no verification result"}
+    print(f'plant verify: is_plant={data.get("is_plant")}, object_type="{data.get("object_type")}", confidence={data.get("confidence")}')
+    return data
+
+
 def verify_same_sign(current_crop_path, previous_memory, config):
     if previous_memory is None:
         return {"same_sign": False, "reason": "no previous sign memory", "confidence": 0.0}

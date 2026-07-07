@@ -13,7 +13,7 @@ from .phrases import (
     get_unclear_sign_response,
 )
 from .scene_memory import lookup_scene_memory, store_scene_memory
-from .vision_llm import analyze_image_with_gemma
+from .vision_llm import analyze_image_with_gemma, verify_plant_candidate
 
 
 RULES = (
@@ -140,6 +140,29 @@ Facts:
         print(f"plant response model: {model}")
         answer = generate(prompt, config, timeout=getattr(config, "ollama_dialogue_timeout", 12), model=model)
     return clean_spoken_answer(answer or fallback, strip_followups=False)
+
+
+def plant_rejection_answer(verification):
+    object_type = (verification or {}).get("object_type") or "that object"
+    article = "" if str(object_type).lower().startswith(("a ", "an ", "the ")) else "a "
+    reason = (verification or {}).get("reason") or ""
+    text = f"That does not look like a plant to me. It looks more like {article}{object_type}."
+    if reason and len(reason) < 140:
+        text = f"{text} {reason}"
+    return clean_spoken_answer(text)
+
+
+def should_send_to_plantnet(crop, config, state=None):
+    if not getattr(config, "verify_plant_before_plantnet", True):
+        return True, None
+    verification = verify_plant_candidate(crop, config)
+    if state is not None:
+        state.last_vision_result = verification
+    is_plant = bool((verification or {}).get("is_plant"))
+    confidence = float((verification or {}).get("confidence") or 0.0)
+    if is_plant and confidence >= float(getattr(config, "plant_verify_min_confidence", 0.70)):
+        return True, verification
+    return False, verification
 
 
 def clean_spoken_answer(text, strip_followups=True):
@@ -391,11 +414,18 @@ def answer_for(kind, crop, intent, config=None, state=None):
             _store_cached_response(state, kind, intent, crop, answer)
             return answer
 
+        ok_to_identify, verification = should_send_to_plantnet(crop, config, state)
+        if not ok_to_identify:
+            answer = plant_rejection_answer(verification)
+            if state is not None:
+                state.last_plant_id_result = None
+            _store_cached_response(state, kind, intent, crop, answer)
+            return answer
+
         print("plantnet: called")
         plant_id = identify_plant(crop, config)
         if state is not None:
             state.last_plant_id_result = plant_id
-            state.last_vision_result = None
         answer = plant_response_from_id(plant_id, config)
         _store_cached_response(state, kind, intent, crop, answer)
         return answer
@@ -409,6 +439,11 @@ def answer_for(kind, crop, intent, config=None, state=None):
     if image_type == "plant":
         plant_id = None
         if getattr(config, "use_plant_id", False):
+            ok_to_identify, verification = should_send_to_plantnet(crop, config, state)
+            if not ok_to_identify:
+                answer = plant_rejection_answer(verification)
+                _store_cached_response(state, kind, intent, crop, answer)
+                return answer
             plant_id = identify_plant(crop, config)
             if state is not None:
                 state.last_plant_id_result = plant_id

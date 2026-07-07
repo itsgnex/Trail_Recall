@@ -49,6 +49,8 @@ class Config:
     plantnet_min_confidence: float = 0.45
     plantnet_high_confidence: float = 0.70
     plant_response_ai: bool = True
+    verify_plant_before_plantnet: bool = True
+    plant_verify_min_confidence: float = 0.70
     use_plant_id: bool = False
     mic_device_index: int = 0
     mic_listen_timeout: int = 12
@@ -166,6 +168,8 @@ class Config:
             plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.45")),
             plantnet_high_confidence=float(os.getenv("PLANTNET_HIGH_CONFIDENCE", "0.70")),
             plant_response_ai=env_bool("PLANT_RESPONSE_AI", True),
+            verify_plant_before_plantnet=env_bool("VERIFY_PLANT_BEFORE_PLANTNET", True),
+            plant_verify_min_confidence=float(os.getenv("PLANT_VERIFY_MIN_CONFIDENCE", "0.70")),
             use_plant_id=env_bool("USE_PLANT_ID", bool(plantnet_api_key)),
             mic_device_index=mic_device_index if mic_device_index is not None else int(os.getenv("MIC_DEVICE_INDEX", "0")),
             mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", profile_default("mic_listen_timeout", "12"))),
