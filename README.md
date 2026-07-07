@@ -50,6 +50,15 @@ Or open a camera directly:
 ./.venv312/bin/python main.py --camera 2 --mic 0
 ```
 
+Or point the app at a stream URL directly:
+
+```bash
+./.venv312/bin/python main.py --camera-source rtmp://192.168.1.65:1935/live/mentra-live --mic 0
+./.venv312/bin/python main.py --camera-source http://192.168.1.65:8888/live/mentra-live/index.m3u8 --mic 0
+```
+
+Use `--camera-source` when you want the Mentra stream to be used as the camera input without OBS.
+
 ## Optional AI
 
 The app works without CLIP or Ollama.

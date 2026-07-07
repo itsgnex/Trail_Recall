@@ -5,7 +5,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-
+#Build a confidence-aware, landmark-augmented route retracing assistant with a simple junction decision feature.
 import cv2
 import numpy as np
 
@@ -615,10 +615,25 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
 def parse_args():
     parser = argparse.ArgumentParser(description="Phase 1 gaze-triggered plant and sign assistant.")
     parser.add_argument("--camera", type=int, help="Open this camera index directly, for example --camera 1.")
+    parser.add_argument("--camera-source", help="Open a camera index or stream URL directly, for example --camera-source rtmp://127.0.0.1:1935/live/mentra-live or --camera-source http://127.0.0.1:8888/live/mentra-live/index.m3u8.")
     parser.add_argument("--mic", type=int, help="Use this microphone device index, for example --mic 0.")
     parser.add_argument("--camera-only", action="store_true", help="Open the camera window only, with no wake listener, speech, or AI flow.")
     parser.add_argument("--test-wake", action="store_true", help="Listen for wake phrases only and print wake debug output.")
     return parser.parse_args()
+
+
+def normalize_camera_source(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 
 def run_wake_test(config, mic_index=None):
@@ -661,11 +676,14 @@ def main():
     if args.test_wake:
         run_wake_test(config, mic_index=args.mic)
         return
-    camera_index = config.camera_index if args.camera is not None else choose_camera()
-    if camera_index is None:
+    camera_source = normalize_camera_source(
+        args.camera_source if args.camera_source is not None else (config.camera_index if args.camera is not None else choose_camera())
+    )
+    if camera_source is None:
         return
 
     camera_only_mode = bool(args.camera_only)
+    camera_source_is_stream = isinstance(camera_source, str) and camera_source.lower().startswith(("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://"))
     wake_enabled = not camera_only_mode and (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False))
 
     trigger = DwellTrigger(config.dwell_seconds, config.cooldown_seconds)
@@ -679,9 +697,9 @@ def main():
         wake_thread.start()
 
     try:
-        with Camera(camera_index) as camera:
+        with Camera(camera_source) as camera:
             if not camera.opened:
-                print(f"Could not open webcam index {camera_index}. Try python main.py to scan cameras, or use python main.py --camera 1.")
+                print(f"Could not open camera source {camera_source!r}. Try python main.py to scan cameras, or use python main.py --camera 1.")
                 return
 
             ready_announced = False
@@ -696,7 +714,10 @@ def main():
 
                 frame = camera.read()
                 if frame is None:
-                    print("Camera frame was unavailable. Check macOS camera permission and try again.")
+                    if camera_source_is_stream:
+                        print(f"Stream frame was unavailable from {camera_source!r}. Check that the Mentra RTMP/HLS publisher is live and the URL is correct.")
+                    else:
+                        print("Camera frame was unavailable. Check macOS camera permission and try again.")
                     return
 
                 if camera_only_mode:
