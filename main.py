@@ -27,8 +27,9 @@ from src.phrases import (
     get_wake_check_response,
 )
 from src.session_state import SessionState
+from src.scene_memory import lookup_scene_memory, restore_plant_id
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign
-from src.speech_in import is_incomplete_command, listen, listen_for_wake_phrase, strip_wake_phrase
+from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, strip_wake_phrase
 from src.speech_out import is_speaking, speak
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
@@ -63,6 +64,44 @@ def crop_changed_enough(current, previous, threshold=5.0):
     return float(np.mean(np.abs(current.astype(np.int16) - previous.astype(np.int16)))) >= threshold
 
 
+def needs_clearer_view(answer):
+    text = (answer or "").lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "not clear enough",
+            "cannot read",
+            "can't read",
+            "hard to see",
+            "too blurry",
+            "too far",
+            "closer",
+            "steadier",
+            "straighter",
+            "clearer view",
+            "centering",
+            "center it",
+        )
+    )
+
+
+def answer_asks_follow_up(answer):
+    text = (answer or "").strip().lower()
+    if not text.endswith("?"):
+        return False
+    return any(
+        phrase in text
+        for phrase in (
+            "would you like",
+            "do you want",
+            "should i",
+            "can i",
+            "want me to",
+            "if you want",
+        )
+    )
+
+
 def record_sign_memory(crop, crop_path, config, state, now=None):
     if not getattr(config, "sign_memory_enabled", True):
         return None
@@ -89,10 +128,10 @@ def record_sign_memory(crop, crop_path, config, state, now=None):
 
 def maybe_suppress_sign_prompt(crop, crop_path, config, state):
     if not getattr(config, "sign_memory_enabled", True):
-        return False, None
+        return False, None, None
     embedding = get_crop_embedding(crop)
     if embedding is None:
-        return False, None
+        return False, None, None
 
     now = time.monotonic()
     cleanup_old_signs(now, getattr(config, "sign_memory_ttl_seconds", 600))
@@ -104,11 +143,11 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
     )
     if match is None:
         print("sign memory: no similar sign found")
-        return False, embedding
+        return False, None, embedding
 
     print(f"sign memory: possible duplicate similarity={similarity:.2f}")
     if similarity < getattr(config, "sign_clip_duplicate_threshold", 0.88):
-        return False, embedding
+        return False, None, embedding
 
     if getattr(config, "sign_gemma_verify_duplicates", True):
         verdict = verify_same_sign(crop_path, match, config)
@@ -122,12 +161,12 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
                 duplicate_threshold=getattr(config, "sign_clip_possible_duplicate_threshold", 0.82),
                 now=now,
             )
-            return True, embedding
+            return True, match.get("final_answer") or None, embedding
         print("sign memory: different sign, continuing")
-        return False, embedding
+        return False, None, embedding
 
     print("sign memory: duplicate threshold reached, continuing without verify")
-    return False, embedding
+    return False, None, embedding
 
 
 def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text="", record_seconds=None):
@@ -184,6 +223,9 @@ def handle_voice_command(transcript, config, state, camera):
             getattr(config, "allow_single_word_wake", False),
         )
         command = (command or "").strip()
+        if is_wake_check_command(command):
+            speak(get_wake_check_response())
+            return
         if is_incomplete_command(command):
             speak("I did not catch the full question. Please say it again.")
             command = listen(
@@ -198,6 +240,9 @@ def handle_voice_command(transcript, config, state, camera):
                 getattr(config, "allow_single_word_wake", False),
             )
         command = (command or "").strip()
+        if is_wake_check_command(command):
+            speak(get_wake_check_response())
+            return
         print(f'command transcript: "{command}"')
         if not command or is_incomplete_command(command):
             speak(get_wake_check_response())
@@ -454,8 +499,13 @@ def handle_follow_up(crop, config, state, camera):
             state.last_final_answer = answer
             state.last_answer_time = time.monotonic()
             speak(answer)
+            if needs_clearer_view(answer):
+                state.last_assistant_question_type = "retry_clearer_view"
+                return
             state.last_follow_up_offer = None
-            if getattr(config, "speak_follow_up_offer", False) and intent in {Intent.EXPLAIN_PLANT, Intent.EXPLAIN_SIGN_MEANING, Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
+            if answer_asks_follow_up(answer):
+                state.last_assistant_question_type = "follow_up_offer"
+            elif getattr(config, "speak_follow_up_offer", False) and intent in {Intent.EXPLAIN_PLANT, Intent.EXPLAIN_SIGN_MEANING, Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
                 state.last_follow_up_offer = get_follow_up_offer()
                 speak(state.last_follow_up_offer)
                 state.last_assistant_question_type = "follow_up_offer"
@@ -481,7 +531,11 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         state.last_prompt = prompt
         state.last_assistant_question_type = "initial_permission"
         speak(prompt)
-        heard = listen(config)
+        state.awaiting_follow_up_reply = True
+        try:
+            heard = listen(config)
+        finally:
+            state.awaiting_follow_up_reply = False
         ocr_text = read_text(crop) if kind == "sign" else ""
         intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
         print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
@@ -534,8 +588,13 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         state.last_final_answer = answer
         state.last_answer_time = time.monotonic()
         speak(answer)
+        if needs_clearer_view(answer):
+            state.last_assistant_question_type = "retry_clearer_view"
+            return
         state.last_follow_up_offer = None
-        if getattr(config, "speak_follow_up_offer", False) and intent in {Intent.EXPLAIN_PLANT, Intent.EXPLAIN_SIGN_MEANING, Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
+        if answer_asks_follow_up(answer):
+            state.last_assistant_question_type = "follow_up_offer"
+        elif getattr(config, "speak_follow_up_offer", False) and intent in {Intent.EXPLAIN_PLANT, Intent.EXPLAIN_SIGN_MEANING, Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
             state.last_follow_up_offer = get_follow_up_offer()
             speak(state.last_follow_up_offer)
             state.last_assistant_question_type = "follow_up_offer"
@@ -658,13 +717,40 @@ def main():
                         last_analysis_signature = signature
                         result = analyze_crop(crop, config)
                         print(f"center crop: {result.kind} ({result.reason})")
-                        if result.kind == "plant" and wake_enabled:
-                            print("plant prompt muted in voice mode")
-                        elif trigger.update(result.kind):
+                        if trigger.update(result.kind):
                             crop_path = save_debug_crop(result.kind, crop)
+                            remembered = lookup_scene_memory(
+                                result.kind,
+                                "scene",
+                                crop,
+                                ttl_seconds=getattr(config, "scene_memory_ttl_seconds", 3600),
+                            )
+                            if remembered:
+                                print("scene memory: using stored answer")
+                                state.last_detected_kind = result.kind
+                                state.last_crop_path = crop_path
+                                state.last_core_answer = remembered.get("answer") or ""
+                                state.last_final_answer = remembered.get("answer") or ""
+                                state.last_answer_time = time.monotonic()
+                                state.last_vision_result = remembered.get("vision_result")
+                                state.last_plant_id_result = restore_plant_id(remembered.get("plant_id_result"))
+                                speak(remembered.get("answer") or "")
+                                if result.kind == "sign" or state.last_detected_kind == "sign":
+                                    record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
+                                draw_focus_box(frame, box)
+                                if camera.show(frame):
+                                    break
+                                continue
                             if result.kind == "sign":
-                                suppressed, _ = maybe_suppress_sign_prompt(crop, crop_path, config, state)
+                                suppressed, cached_answer, _ = maybe_suppress_sign_prompt(crop, crop_path, config, state)
                                 if suppressed:
+                                    if cached_answer:
+                                        state.last_detected_kind = "sign"
+                                        state.last_crop_path = crop_path
+                                        state.last_core_answer = cached_answer
+                                        state.last_final_answer = cached_answer
+                                        state.last_answer_time = time.monotonic()
+                                        speak(cached_answer)
                                     draw_focus_box(frame, box)
                                     if camera.show(frame):
                                         break

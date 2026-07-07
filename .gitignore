@@ -26,6 +26,8 @@ test_voice_base.wav
 .coverage
 coverage.xml
 *.log
+.scene_memory.json
+.scene_memory.json.tmp
 
 # Temporary local scratch files in the project root
 /accessible

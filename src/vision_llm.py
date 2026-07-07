@@ -1,17 +1,34 @@
 import base64
+import hashlib
+import json
 
 import cv2
 
 from .ollama_client import generate_json
+from .openrouter_client import generate as generate_openrouter
+
+MAX_IMAGE_EDGE = 384
+VISION_API_TIMEOUT = 4
 
 
 def crop_to_base64(crop):
     h, w = crop.shape[:2]
-    scale = 640 / max(h, w)
+    scale = MAX_IMAGE_EDGE / max(h, w)
     if scale < 1:
         crop = cv2.resize(crop, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
     return base64.b64encode(encoded).decode() if ok else ""
+
+
+def _parse_json(text):
+    if not text:
+        return None
+    try:
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        return json.loads(text[start:end])
+    except Exception:
+        return None
 
 
 def path_to_base64(image_path):
@@ -19,12 +36,45 @@ def path_to_base64(image_path):
     return crop_to_base64(image) if image is not None else ""
 
 
+def crop_signature(crop):
+    if crop is None or crop.size == 0:
+        return ""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (16, 16), interpolation=cv2.INTER_AREA)
+    return hashlib.sha1(small.tobytes()).hexdigest()
+
+
+def _vision_timeout(config):
+    return min(int(getattr(config, "openrouter_timeout", 8)), VISION_API_TIMEOUT)
+
+
+def _openrouter_json(prompt, config, images=None, label="vision"):
+    openrouter_model = getattr(config, "openrouter_model", "google/gemini-3.1-flash-lite")
+    if images:
+        print(f"{label}: sending image to OpenRouter model {openrouter_model}")
+    else:
+        print(f"{label}: sending text to OpenRouter model {openrouter_model}")
+    text = generate_openrouter(prompt, config, timeout=_vision_timeout(config), model=openrouter_model, images=images)
+    return _parse_json(text)
+
+
+def _local_json(prompt, config, images=None):
+    if not getattr(config, "use_local_vision_llm", False):
+        return None
+    local_model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:1b"))
+    kind = "image" if images else "text"
+    print(f"local vision fallback: calling {local_model} for {kind}")
+    timeout = min(
+        getattr(config, "ollama_image_timeout", 45) if images else getattr(config, "ollama_text_timeout", 20),
+        VISION_API_TIMEOUT,
+    )
+    return generate_json(prompt, config, timeout=timeout, model=local_model, images=images)
+
+
 def analyze_image_with_gemma(crop, detected_kind, user_action, config, ocr_text="", clip_confidence=None):
     image = crop_to_base64(crop)
     if not image:
         return None
-    model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:4b"))
-    print(f"sending crop to vision model {model}")
     prompt = f"""
 Look only at the provided image crop.
 Do not invent details.
@@ -60,7 +110,9 @@ Context:
 - ocr_text: {(ocr_text or None)!r}
 - clip_confidence: {clip_confidence}
 """
-    data = generate_json(prompt, config, timeout=config.ollama_image_timeout, model=model, images=[image])
+    data = _openrouter_json(prompt, config, images=[image], label="vision")
+    if not data:
+        data = _local_json(prompt, config, images=[image])
     if not data:
         return None
     print(f'vision llm: {data.get("image_type")}, visible_text="{data.get("visible_text")}", confidence={data.get("confidence")}')
@@ -73,8 +125,7 @@ def verify_same_sign(current_crop_path, previous_memory, config):
 
     current_image = path_to_base64(current_crop_path)
     previous_image = path_to_base64(previous_memory.get("crop_path"))
-    model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:4b"))
-    print(f"sign memory: verifying duplicate with {model}")
+    print("sign memory: verifying duplicate")
 
     prompt = f"""
 You are comparing a current sign image against a previously seen sign. Decide if they are the same physical sign or effectively the same sign content. Return strict JSON only.
@@ -87,12 +138,16 @@ Previous sign memory:
 - final_answer: {(previous_memory.get("final_answer") or None)!r}
 Return:
 {{"same_sign": true, "reason": "Both appear to be the same sign.", "confidence": 0.92}}
-"""
+    """
     images = [image for image in (current_image, previous_image) if image]
     if images:
-        data = generate_json(prompt, config, timeout=getattr(config, "ollama_image_timeout", 180), model=model, images=images)
+        data = _openrouter_json(prompt, config, images=images, label="sign memory")
+        if not data:
+            data = _local_json(prompt, config, images=images)
     else:
-        data = generate_json(prompt, config, timeout=getattr(config, "ollama_text_timeout", 60), model=model)
+        data = _openrouter_json(prompt, config, label="sign memory")
+        if not data:
+            data = _local_json(prompt, config)
     if not data:
         return {"same_sign": False, "reason": "no model result", "confidence": 0.0}
     return data

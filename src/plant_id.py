@@ -66,16 +66,16 @@ def identify_plant(crop, config):
         organ = getattr(config, "plantnet_organ", "auto")
         url = f"https://my-api.plantnet.org/v2/identify/{project}?api-key={api_key}"
         print(f"plant id: endpoint=https://my-api.plantnet.org/v2/identify/{project}?api-key=REDACTED")
-        params = {"lang": lang, "nb-results": 3}
+        params = {"lang": lang, "nb-results": 3, "no-reject": "true"}
         files = {"images": ("crop.jpg", payload, "image/jpeg")}
-        data = {"organs": organ or "auto"}
+        data = {"organs": organ} if organ and organ != "auto" else None
         response = requests.post(url, params=params, files=files, data=data, timeout=30)
         if response.status_code == 401 or response.status_code == 403:
             print("plant id: unauthorized, check PlantNet API key")
             return PlantIdResult(success=False, error=f"PlantNet unauthorized ({response.status_code})")
         if response.status_code == 404:
-            print("plant id: endpoint or project not found")
-            return PlantIdResult(success=False, error="PlantNet endpoint or project not found")
+            print("plant id: no plant match returned")
+            return PlantIdResult(success=False, error="No plant match returned")
         if response.status_code == 429:
             print("plant id: rate limit reached")
             return PlantIdResult(success=False, error="PlantNet rate limit reached")

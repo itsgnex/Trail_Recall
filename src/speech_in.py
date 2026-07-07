@@ -17,17 +17,41 @@ def _normalize_text(text):
 
 
 def _wake_phrase_patterns(config):
-    patterns = [
-        r"^(hey|hay)\s+trail\s+recall\b",
-        r"^(hey|hay)\s+trails?\b",
-        r"^(hey|hay)\s+trial\b",
-        r"^okay\s+trails?\b",
-        r"^trail\s+recall\b",
-        r"^(hey|hay)\s+assistant\b",
-        r"^(hey|hay)\s+glasses\b",
-    ]
-    if getattr(config, "allow_single_word_wake", False):
-        patterns.append(r"^trail\b")
+    phrases = list(dict.fromkeys(_normalize_text(phrase) for phrase in getattr(config, "wake_phrases", ()) if _normalize_text(phrase)))
+    if not phrases:
+        phrases = [
+            "hey trail",
+            "okay trail",
+            "trail recall",
+            "hey assistant",
+            "hey glasses",
+            "hey nova",
+            "nova",
+        ]
+
+    patterns = []
+    for phrase in sorted(phrases, key=lambda value: (-len(value.split()), value)):
+        if phrase == "hey trail":
+            patterns.append(r"^(hey|hay)\s+(trail|trails|trial|drell|drill|girl|twelve|12)\b")
+            continue
+        if phrase == "okay trail":
+            patterns.append(r"^(okay|ok)\s+(trail|trails|trial|drell|drill|girl|twelve|12)\b")
+            continue
+        if phrase == "trail recall":
+            patterns.append(r"^(trail|trails|trial)\s+recall\b")
+            continue
+        words = phrase.split()
+        escaped = r"\s+".join(re.escape(word) for word in words)
+        if len(words) > 1:
+            patterns.append(rf"^{escaped}\b")
+            continue
+        if phrase == "nova":
+            patterns.append(rf"^{escaped}\b")
+        elif phrase == "trail":
+            if getattr(config, "allow_single_word_wake", False):
+                patterns.append(rf"^{escaped}\b")
+            else:
+                patterns.append(rf"^{escaped}\b\s+.+")
     return patterns
 
 
@@ -62,7 +86,7 @@ def _wake_rejection_reason(transcript, config):
         return "starts with article, likely normal speech"
     if re.match(r"^(hair|her)\s+trail\b", text):
         return "likely false wake variant"
-    if re.match(r"^trail\b", text) and not getattr(config, "allow_single_word_wake", False):
+    if text == "trail" and not getattr(config, "allow_single_word_wake", False):
         return "single-word wake disabled"
     if re.search(r"\btrail\b|\btrails\b|\btrial\b", text):
         return "contains trail-like word but not a wake phrase"
@@ -73,14 +97,28 @@ def wake_phrase_detected(transcript, config):
     text = _normalize_text(transcript)
     if not text:
         return False
-    return any(re.match(pattern, text) for pattern in _wake_phrase_patterns(config))
+    if any(re.match(pattern, text) for pattern in _wake_phrase_patterns(config)):
+        return True
+    if re.search(r"\b(can you|could you|would you)\s+(hear|help)\s+(me|that|this)?\b", text):
+        return True
+    if re.match(r"^(hey|hay|okay|ok|yo)\b", text) and re.search(
+        r"\b(can you|could you|would you|do it|help me|hear me|what is|what's|read this|look at this|tell me|please do)\b",
+        text,
+    ):
+        return True
+    return False
+
+
+def is_wake_check_command(command):
+    text = _normalize_text(command)
+    return bool(re.search(r"\b(can you|could you|would you)\s+hear\s+(me|that|this)?\b|\bare you there\b|\bhello\b", text))
 
 
 def is_incomplete_command(command):
     text = _normalize_text(command)
     if not text:
         return True
-    if text in {"can you hear me", "can u hear me", "are you there", "hello", "hey", "hey trail can you hear me"}:
+    if text in {"hey"}:
         return True
     if text in {"can you", "can you tell me", "can you tell me what the", "what is the", "what is", "what are the", "describe", "read", "tell me"}:
         return True
@@ -119,34 +157,90 @@ def transcribe_with_whisper(audio, config):
         return ""
 
 
-def _record_audio(config, phrase_time_limit, typed_fallback=True, quiet=False, label="recording", mic_index=None):
-    with _audio_lock:
-        try:
-            import speech_recognition as sr
+def transcribe_with_openai(audio, config):
+    api_key = getattr(config, "openai_api_key", "")
+    if not api_key:
+        print("OpenAI STT skipped: OPENAI_API_KEY is not set.")
+        return ""
+    try:
+        import requests
 
-            recognizer = sr.Recognizer()
-            device_index = getattr(config, "mic_device_index", 0) if mic_index is None else mic_index
-            names = sr.Microphone.list_microphone_names()
-            if 0 <= device_index < len(names) and not quiet:
-                print(f"using microphone: {names[device_index]}")
-            with sr.Microphone(device_index=device_index) as source:
-                timeout = phrase_time_limit if not typed_fallback else getattr(config, "mic_listen_timeout", 12)
-                if not quiet:
-                    print(f"{label} for {phrase_time_limit} seconds...")
-                recognizer.adjust_for_ambient_noise(source, duration=getattr(config, "mic_ambient_noise_duration", 1))
-                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
-            return audio
-        except Exception as exc:
-            if exc.__class__.__name__ == "WaitTimeoutError" and not typed_fallback:
-                return ""
-            print(f"Microphone speech input unavailable: {exc}")
-            if not typed_fallback:
-                return ""
-            print("Type your response instead, or allow microphone permission on macOS and install PyAudio.")
+        model = getattr(config, "openai_stt_model", "gpt-4o-mini-transcribe")
+        url = getattr(config, "openai_stt_url", "https://api.openai.com/v1/audio/transcriptions")
+        timeout = int(getattr(config, "openai_stt_timeout", 8))
+        print(f"calling OpenAI STT model: {model}")
+        started_at = time.monotonic()
+        response = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": ("audio.wav", audio.get_wav_data(), "audio/wav")},
+            data={"model": model, "response_format": "text", "language": "en"},
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            print(f"OpenAI STT failed: {response.status_code} {response.text[:180]}")
+            return ""
+        print(f"OpenAI STT response received in {time.monotonic() - started_at:.1f} seconds")
+        return response.text.strip()
+    except Exception as exc:
+        print(f"OpenAI STT unavailable: {exc}")
+        return ""
+
+
+def _transcribe_primary(audio, config):
+    provider = getattr(config, "stt_provider", "local")
+    if provider == "openai":
+        return transcribe_with_openai(audio, config)
+    if provider == "openai_first":
+        return transcribe_with_openai(audio, config) or transcribe_with_whisper(audio, config)
+    return transcribe_with_whisper(audio, config)
+
+
+def _transcribe_with_google(audio):
+    import speech_recognition as sr
+
+    recognizer = sr.Recognizer()
+    return recognizer.recognize_google(audio)
+
+
+def _record_audio(config, phrase_time_limit, typed_fallback=True, quiet=False, label="recording", mic_index=None, fixed_duration=False):
+    with _audio_lock:
+        last_error = None
+        for attempt in range(2):
             try:
-                return input("> ")
-            except EOFError:
-                return ""
+                import speech_recognition as sr
+
+                recognizer = sr.Recognizer()
+                device_index = getattr(config, "mic_device_index", 0) if mic_index is None else mic_index
+                names = sr.Microphone.list_microphone_names()
+                if 0 <= device_index < len(names) and not quiet:
+                    print(f"using microphone: {names[device_index]}")
+                with sr.Microphone(device_index=device_index) as source:
+                    timeout = phrase_time_limit if not typed_fallback else getattr(config, "mic_listen_timeout", 12)
+                    if not quiet:
+                        print(f"{label} for {phrase_time_limit} seconds...")
+                    recognizer.adjust_for_ambient_noise(source, duration=getattr(config, "mic_ambient_noise_duration", 1))
+                    if fixed_duration:
+                        audio = recognizer.record(source, duration=phrase_time_limit)
+                    else:
+                        audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+                return audio
+            except Exception as exc:
+                last_error = exc
+                if exc.__class__.__name__ == "WaitTimeoutError" and not typed_fallback:
+                    return ""
+                if attempt == 0:
+                    print("Microphone had a brief issue; retrying once...")
+                    time.sleep(0.25)
+                    continue
+                print(f"Microphone speech input unavailable: {last_error}")
+                if not typed_fallback:
+                    return ""
+                print("Type your response instead, or allow microphone permission on macOS and install PyAudio.")
+                try:
+                    return input("> ")
+                except EOFError:
+                    return ""
 
 
 def listen(config=None, typed_fallback=True, record_seconds=None, label="recording"):
@@ -161,7 +255,7 @@ def listen(config=None, typed_fallback=True, record_seconds=None, label="recordi
 
 
 def _transcribe_with_fallback(audio, config, short_mode, typed_fallback, label):
-    text = transcribe_with_whisper(audio, config)
+    text = _transcribe_primary(audio, config)
     if text:
         return text
 
@@ -170,15 +264,12 @@ def _transcribe_with_fallback(audio, config, short_mode, typed_fallback, label):
         audio = _record_audio(config, 3, typed_fallback, quiet=False, label=label)
         if isinstance(audio, str):
             return audio
-        text = transcribe_with_whisper(audio, config)
+        text = _transcribe_primary(audio, config)
         if text:
             return text
 
     try:
-        import speech_recognition as sr
-
-        recognizer = sr.Recognizer()
-        return recognizer.recognize_google(audio)
+        return _transcribe_with_google(audio)
     except Exception as exc:
         print(f"Microphone speech input unavailable: {exc}")
         if not typed_fallback:
@@ -203,14 +294,29 @@ def listen_for_wake_phrase(mic_index=None, config=None, state=None):
         quiet=True,
         label="wake recording",
         mic_index=mic_index,
+        fixed_duration=True,
     )
     if isinstance(audio, str):
         return None
 
-    transcript = transcribe_with_whisper(audio, config)
+    transcript = _transcribe_primary(audio, config)
+    normalized = _normalize_text(transcript)
+    if not wake_phrase_detected(normalized, config):
+        try:
+            google_transcript = _transcribe_with_google(audio)
+            if wake_phrase_detected(google_transcript, config):
+                transcript = google_transcript
+                normalized = _normalize_text(transcript)
+            elif not normalized:
+                transcript = google_transcript
+                normalized = _normalize_text(transcript)
+        except Exception as exc:
+            if not _whisper_warned:
+                print(f"Wake fallback STT unavailable: {exc}.")
+            transcript = transcript or ""
+            normalized = _normalize_text(transcript)
     debug = bool(getattr(config, "wake_debug_transcripts", True))
     log_empty = bool(getattr(config, "wake_log_empty_transcripts", False))
-    normalized = _normalize_text(transcript)
     if not normalized:
         if debug and log_empty:
             print('wake heard: ""')
@@ -238,7 +344,7 @@ def listen_for_wake_phrase(mic_index=None, config=None, state=None):
 
 def _demo():
     class C:
-        wake_phrases = ("hey trail", "okay trail", "trail recall", "hey assistant", "hey glasses")
+        wake_phrases = ("hey trail", "okay trail", "trail recall", "hey assistant", "hey glasses", "hey nova", "nova")
         allow_single_word_wake = False
         wake_debug_transcripts = True
         wake_log_empty_transcripts = False
@@ -253,6 +359,10 @@ def _demo():
     assert wake_phrase_detected("hay trail what is this", C())
     assert wake_phrase_detected("hey trail", C())
     assert wake_phrase_detected("hey trail recall what is this", C())
+    assert wake_phrase_detected("hey nova what is this", C())
+    assert wake_phrase_detected("nova, what is this", C())
+    assert wake_phrase_detected("tell can you hear me", C())
+    assert is_wake_check_command("can you hear me")
     assert not wake_phrase_detected("hair trail", C())
     assert not wake_phrase_detected("trail", C())
     assert is_incomplete_command("can you")

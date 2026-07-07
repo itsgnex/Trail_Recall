@@ -21,21 +21,26 @@ def env_list(name, default):
 class Config:
     camera_index: int = 0
     focus_fraction: float = 0.45
-    analysis_interval: float = 0.75
+    analysis_interval: float = 1.0
     dwell_seconds: float = 2.0
     cooldown_seconds: float = 9.0
     use_clip: bool = True
     use_llm_intent: bool = True
     use_ollama: bool = True
     dialogue_model: str = "gemma3:1b"
-    vision_llm_model: str = "gemma3:4b"
-    final_response_model: str = "gemma3:4b"
+    vision_llm_model: str = "gemma3:1b"
+    final_response_model: str = "gemma3:1b"
     main_llm_model: str = "gemma3:1b"
-    ollama_model: str = "gemma3:4b"
+    ollama_model: str = "gemma3:1b"
     ollama_url: str = "http://localhost:11434/api/generate"
-    ollama_dialogue_timeout: int = 30
-    ollama_text_timeout: int = 60
-    ollama_image_timeout: int = 180
+    ollama_dialogue_timeout: int = 12
+    ollama_text_timeout: int = 20
+    ollama_image_timeout: int = 45
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-3.1-flash-lite"
+    openrouter_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    openrouter_timeout: int = 8
+    use_local_vision_llm: bool = False
     plant_id_provider: str = "plantnet"
     plantnet_api_key: str = ""
     plantnet_project: str = "all"
@@ -43,6 +48,7 @@ class Config:
     plantnet_organ: str = "auto"
     plantnet_min_confidence: float = 0.45
     plantnet_high_confidence: float = 0.70
+    plant_response_ai: bool = True
     use_plant_id: bool = False
     mic_device_index: int = 0
     mic_listen_timeout: int = 12
@@ -54,9 +60,14 @@ class Config:
     whisper_short_reply_mode: bool = True
     whisper_use_vad: bool = False
     whisper_initial_prompt: str = "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that"
+    stt_provider: str = "local"
+    openai_api_key: str = ""
+    openai_stt_model: str = "gpt-4o-mini-transcribe"
+    openai_stt_url: str = "https://api.openai.com/v1/audio/transcriptions"
+    openai_stt_timeout: int = 8
     follow_up_mode: bool = True
     follow_up_timeout_seconds: int = 8
-    max_follow_up_turns: int = 1
+    max_follow_up_turns: int = 2
     speak_follow_up_offer: bool = False
     follow_up_silence_returns_to_scan: bool = True
     voice_activation_mode: bool = True
@@ -67,6 +78,7 @@ class Config:
         "trail recall",
         "hey assistant",
         "hey glasses",
+        "hey nova",
     )
     wake_listen_seconds: float = 2.5
     command_record_seconds: int = 6
@@ -79,7 +91,7 @@ class Config:
     voice_command_mode: bool = True
     allow_general_questions: bool = True
     general_question_model: str = "gemma3:1b"
-    image_task_model: str = "gemma3:4b"
+    image_task_model: str = "gemma3:1b"
     sign_memory_enabled: bool = True
     sign_memory_max_items: int = 30
     sign_memory_ttl_seconds: int = 600
@@ -87,24 +99,65 @@ class Config:
     sign_clip_possible_duplicate_threshold: float = 0.82
     sign_gemma_verify_duplicates: bool = True
     sign_duplicate_suppress_seconds: int = 180
+    scene_memory_enabled: bool = True
+    scene_memory_ttl_seconds: int = 3600
+    scene_memory_max_items: int = 120
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
+        voice_profile = os.getenv("VOICE_PROFILE", "balanced").strip().lower()
+        profile_defaults = {
+            "fast": {
+                "whisper_model": "small.en",
+                "whisper_record_seconds": "3",
+                "whisper_short_reply_mode": "false",
+                "whisper_use_vad": "false",
+                "wake_listen_seconds": "3.5",
+                "command_record_seconds": "5",
+                "wake_cooldown_seconds": "1",
+                "mic_listen_timeout": "8",
+                "mic_ambient_noise_duration": "0.75",
+                "wake_log_empty_transcripts": "true",
+            },
+            "whisper_first": {
+                "whisper_model": "small.en",
+                "whisper_record_seconds": "4",
+                "whisper_short_reply_mode": "false",
+                "whisper_use_vad": "false",
+                "wake_listen_seconds": "2.0",
+                "command_record_seconds": "5",
+                "wake_cooldown_seconds": "2",
+                "mic_listen_timeout": "10",
+                "mic_ambient_noise_duration": "1.0",
+            },
+            "balanced": {},
+        }.get(voice_profile, {})
+
+        def profile_default(name, default):
+            return profile_defaults.get(name, default)
+
         plantnet_api_key = os.getenv("PLANTNET_API_KEY", "")
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
+        openai_api_key = os.getenv("OPENAI_API_KEY", "")
         return cls(
             camera_index=camera_index if camera_index is not None else int(os.getenv("CAMERA_INDEX", "0")),
             use_clip=env_bool("USE_CLIP", True),
             use_llm_intent=env_bool("USE_LLM_INTENT", True),
             use_ollama=env_bool("USE_OLLAMA", True),
             dialogue_model=os.getenv("DIALOGUE_MODEL", os.getenv("MAIN_LLM_MODEL", "gemma3:1b")),
-            vision_llm_model=os.getenv("VISION_LLM_MODEL", "gemma3:4b"),
-            final_response_model=os.getenv("FINAL_RESPONSE_MODEL", "gemma3:4b"),
+            vision_llm_model=os.getenv("VISION_LLM_MODEL", "gemma3:1b"),
+            final_response_model=os.getenv("FINAL_RESPONSE_MODEL", "gemma3:1b"),
             main_llm_model=os.getenv("MAIN_LLM_MODEL", os.getenv("DIALOGUE_MODEL", "gemma3:1b")),
-            ollama_model=os.getenv("OLLAMA_MODEL", "gemma3:4b"),
+            ollama_model=os.getenv("OLLAMA_MODEL", "gemma3:1b"),
             ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate"),
-            ollama_dialogue_timeout=int(os.getenv("OLLAMA_DIALOGUE_TIMEOUT", "30")),
-            ollama_text_timeout=int(os.getenv("OLLAMA_TEXT_TIMEOUT", "60")),
-            ollama_image_timeout=int(os.getenv("OLLAMA_IMAGE_TIMEOUT", "180")),
+            ollama_dialogue_timeout=int(os.getenv("OLLAMA_DIALOGUE_TIMEOUT", "12")),
+            ollama_text_timeout=int(os.getenv("OLLAMA_TEXT_TIMEOUT", "20")),
+            ollama_image_timeout=int(os.getenv("OLLAMA_IMAGE_TIMEOUT", "45")),
+            openrouter_api_key=openrouter_api_key,
+            openrouter_model=os.getenv("OPENROUTER_MODEL", "google/gemini-3.1-flash-lite"),
+            openrouter_url=os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions"),
+            openrouter_timeout=int(os.getenv("OPENROUTER_TIMEOUT", "8")),
+            use_local_vision_llm=env_bool("USE_LOCAL_VISION_LLM", False),
             plant_id_provider=os.getenv("PLANT_ID_PROVIDER", "plantnet"),
             plantnet_api_key=plantnet_api_key,
             plantnet_project=os.getenv("PLANTNET_PROJECT", "all"),
@@ -112,23 +165,29 @@ class Config:
             plantnet_organ=os.getenv("PLANTNET_ORGAN", "auto"),
             plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.45")),
             plantnet_high_confidence=float(os.getenv("PLANTNET_HIGH_CONFIDENCE", "0.70")),
-            use_plant_id=env_bool("USE_PLANT_ID", False),
+            plant_response_ai=env_bool("PLANT_RESPONSE_AI", True),
+            use_plant_id=env_bool("USE_PLANT_ID", bool(plantnet_api_key)),
             mic_device_index=mic_device_index if mic_device_index is not None else int(os.getenv("MIC_DEVICE_INDEX", "0")),
-            mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", "12")),
+            mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", profile_default("mic_listen_timeout", "12"))),
             mic_phrase_time_limit=int(os.getenv("MIC_PHRASE_TIME_LIMIT", "7")),
-            mic_ambient_noise_duration=float(os.getenv("MIC_AMBIENT_NOISE_DURATION", "1")),
+            mic_ambient_noise_duration=float(os.getenv("MIC_AMBIENT_NOISE_DURATION", profile_default("mic_ambient_noise_duration", "1"))),
             use_whisper_stt=env_bool("USE_WHISPER_STT", True),
-            whisper_model=os.getenv("WHISPER_MODEL", "small.en"),
-            whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", "5")),
-            whisper_short_reply_mode=env_bool("WHISPER_SHORT_REPLY_MODE", True),
-            whisper_use_vad=env_bool("WHISPER_USE_VAD", False),
+            whisper_model=os.getenv("WHISPER_MODEL", profile_default("whisper_model", "small.en")),
+            whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", profile_default("whisper_record_seconds", "5"))),
+            whisper_short_reply_mode=env_bool("WHISPER_SHORT_REPLY_MODE", profile_default("whisper_short_reply_mode", "true")),
+            whisper_use_vad=env_bool("WHISPER_USE_VAD", profile_default("whisper_use_vad", "false")),
             whisper_initial_prompt=os.getenv(
                 "WHISPER_INITIAL_PROMPT",
                 "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that",
             ),
+            stt_provider=os.getenv("STT_PROVIDER", "local").strip().lower(),
+            openai_api_key=openai_api_key,
+            openai_stt_model=os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe"),
+            openai_stt_url=os.getenv("OPENAI_STT_URL", "https://api.openai.com/v1/audio/transcriptions"),
+            openai_stt_timeout=int(os.getenv("OPENAI_STT_TIMEOUT", "8")),
             follow_up_mode=env_bool("FOLLOW_UP_MODE", True),
             follow_up_timeout_seconds=int(os.getenv("FOLLOW_UP_TIMEOUT_SECONDS", "8")),
-            max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "1")),
+            max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "2")),
             speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
             follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
             voice_activation_mode=env_bool("VOICE_ACTIVATION_MODE", True),
@@ -142,21 +201,23 @@ class Config:
                     "hey assistant",
                     "assistant",
                     "hey glasses",
+                    "hey nova",
+                    "nova",
                     "can you help",
                 ),
             ),
-            wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", "2.5")),
-            command_record_seconds=int(os.getenv("COMMAND_RECORD_SECONDS", "6")),
-            wake_cooldown_seconds=int(os.getenv("WAKE_COOLDOWN_SECONDS", "2")),
+            wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", profile_default("wake_listen_seconds", "2.5"))),
+            command_record_seconds=int(os.getenv("COMMAND_RECORD_SECONDS", profile_default("command_record_seconds", "6"))),
+            wake_cooldown_seconds=int(os.getenv("WAKE_COOLDOWN_SECONDS", profile_default("wake_cooldown_seconds", "2"))),
             pause_wake_during_tts=env_bool("PAUSE_WAKE_DURING_TTS", True),
             allow_single_word_wake=env_bool("ALLOW_SINGLE_WORD_WAKE", False),
             wake_debug_transcripts=env_bool("WAKE_DEBUG_TRANSCRIPTS", True),
-            wake_log_empty_transcripts=env_bool("WAKE_LOG_EMPTY_TRANSCRIPTS", False),
+            wake_log_empty_transcripts=env_bool("WAKE_LOG_EMPTY_TRANSCRIPTS", profile_default("wake_log_empty_transcripts", "false")),
             wake_min_transcript_length=int(os.getenv("WAKE_MIN_TRANSCRIPT_LENGTH", "2")),
             voice_command_mode=env_bool("VOICE_COMMAND_MODE", True),
             allow_general_questions=env_bool("ALLOW_GENERAL_QUESTIONS", True),
             general_question_model=os.getenv("GENERAL_QUESTION_MODEL", "gemma3:1b"),
-            image_task_model=os.getenv("IMAGE_TASK_MODEL", "gemma3:4b"),
+            image_task_model=os.getenv("IMAGE_TASK_MODEL", "gemma3:1b"),
             sign_memory_enabled=env_bool("SIGN_MEMORY_ENABLED", True),
             sign_memory_max_items=int(os.getenv("SIGN_MEMORY_MAX_ITEMS", "30")),
             sign_memory_ttl_seconds=int(os.getenv("SIGN_MEMORY_TTL_SECONDS", "600")),
@@ -164,4 +225,7 @@ class Config:
             sign_clip_possible_duplicate_threshold=float(os.getenv("SIGN_CLIP_POSSIBLE_DUPLICATE_THRESHOLD", "0.82")),
             sign_gemma_verify_duplicates=env_bool("SIGN_GEMMA_VERIFY_DUPLICATES", True),
             sign_duplicate_suppress_seconds=int(os.getenv("SIGN_DUPLICATE_SUPPRESS_SECONDS", "180")),
+            scene_memory_enabled=env_bool("SCENE_MEMORY_ENABLED", True),
+            scene_memory_ttl_seconds=int(os.getenv("SCENE_MEMORY_TTL_SECONDS", "3600")),
+            scene_memory_max_items=int(os.getenv("SCENE_MEMORY_MAX_ITEMS", "120")),
         )

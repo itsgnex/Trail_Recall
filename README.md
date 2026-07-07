@@ -58,18 +58,29 @@ To try local Ollama models:
 
 ```bash
 ollama pull gemma3:1b
-ollama pull gemma3:4b
 ```
 
 Config switches:
 
 ```bash
+VOICE_PROFILE=balanced
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=google/gemini-3.1-flash-lite
+OPENROUTER_TIMEOUT=4
+FINAL_RESPONSE_MODEL=gemma3:1b
+IMAGE_TASK_MODEL=gemma3:1b
+USE_LOCAL_VISION_LLM=false
+STT_PROVIDER=local
+OPENAI_API_KEY=
+OPENAI_STT_MODEL=gpt-4o-mini-transcribe
+OPENAI_STT_TIMEOUT=8
 USE_CLIP=true
 USE_LLM_INTENT=true
 USE_OLLAMA=true
 DIALOGUE_MODEL=gemma3:1b
-VISION_LLM_MODEL=gemma3:4b
-FINAL_RESPONSE_MODEL=gemma3:4b
+VISION_LLM_MODEL=gemma3:1b
+FINAL_RESPONSE_MODEL=gemma3:1b
+OLLAMA_MODEL=gemma3:1b
 OLLAMA_URL=http://localhost:11434/api/generate
 OLLAMA_DIALOGUE_TIMEOUT=30
 OLLAMA_TEXT_TIMEOUT=60
@@ -95,11 +106,25 @@ MIC_PHRASE_TIME_LIMIT=7
 MIC_AMBIENT_NOISE_DURATION=1
 ```
 
+The camera crop sent to vision is currently resized to a **384px max edge** JPEG before being encoded and sent.
+
+Voice profiles:
+
+- `VOICE_PROFILE=fast`: smallest Whisper and shortest wake/command windows
+- `VOICE_PROFILE=whisper_first`: Whisper first, Google only as backup
+- `VOICE_PROFILE=balanced`: current default behavior
+
+Speech-to-text providers:
+
+- `STT_PROVIDER=local`: use local faster-whisper
+- `STT_PROVIDER=openai`: skip local Whisper and use OpenAI speech-to-text
+- `STT_PROVIDER=openai_first`: try OpenAI first, then local Whisper if the API fails
+
 If Ollama is missing or not running, the app prints one warning and uses local fallback intent and response templates.
 
-Gemma 3 1B handles fast dialogue routing. Gemma 3 4B is used only after the dwell trigger and user reply for image understanding and final grounded responses. The app does not send every webcam frame to Ollama.
+Gemma 3 1B handles fast dialogue routing and short text responses. OpenRouter handles image understanding after the dwell trigger and user reply. The app does not send every webcam frame to an API.
 
-When a trigger fires, the app saves the current crop in `debug_crops/` and sends that crop to Gemma 3 4B for sign or plant analysis after the user confirms.
+When a trigger fires, the app saves the current crop in `debug_crops/` and sends that crop to OpenRouter for sign or plant analysis after the user confirms.
 
 ## PlantNet
 
