@@ -409,6 +409,8 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
 def handle_follow_up(crop, config, state, camera):
     if not getattr(config, "follow_up_mode", True):
         return
+    if state.last_assistant_question_type != "follow_up_offer":
+        return
 
     state.follow_up_enabled = True
     state.follow_up_timeout_seconds = getattr(config, "follow_up_timeout_seconds", 8)
@@ -505,12 +507,15 @@ def handle_follow_up(crop, config, state, camera):
             state.last_follow_up_offer = None
             if answer_asks_follow_up(answer):
                 state.last_assistant_question_type = "follow_up_offer"
+                continue
             elif getattr(config, "speak_follow_up_offer", False) and intent in {Intent.EXPLAIN_PLANT, Intent.EXPLAIN_SIGN_MEANING, Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
                 state.last_follow_up_offer = get_follow_up_offer()
                 speak(state.last_follow_up_offer)
                 state.last_assistant_question_type = "follow_up_offer"
+                continue
             else:
                 state.last_assistant_question_type = "none"
+                return
     finally:
         state.follow_up_enabled = False
 

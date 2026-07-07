@@ -52,7 +52,7 @@ def infer_permission_reply(text):
         return "no"
     if has(text, r"\b(repeat|say that)\b"):
         return "repeat"
-    if has(text, r"\b(sounds good|sounds useful|that sounds useful|that helps|that would help|that would be helpful|i'?d like that|i would like that|i'?d appreciate that|i would appreciate that|good idea|fine|alright|all right|go for it|let'?s do it|do that|tell me|show me|help with it|check it|explain it)\b"):
+    if has(text, r"\b(sounds good|sounds useful|that sounds useful|that helps|that would help|that would be helpful|i'?d like that|i would like that|i'?d appreciate that|i would appreciate that|good idea|fine|alright|all right|go for it|let'?s do it|do that|tell me|show me|help with it|check it|explain it|be great|great|play store|play george)\b"):
         return "yes"
     if is_confirmation_reply(text):
         return "yes"
