@@ -5,7 +5,6 @@ from pathlib import Path
 import queue
 import threading
 import time
-#Build a confidence-aware, landmark-augmented route retracing assistant with a simple junction decision feature.
 import cv2
 import numpy as np
 
@@ -25,11 +24,12 @@ from src.phrases import (
     get_unclear_plant_response,
     get_unclear_sign_response,
     get_wake_check_response,
+    format_remembered_answer,
 )
 from src.session_state import SessionState
-from src.scene_memory import lookup_scene_memory, restore_plant_id
-from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign
-from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, strip_wake_phrase
+from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
+from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
+from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
 from src.speech_out import is_speaking, speak
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
@@ -50,6 +50,24 @@ def capture_center_crop(camera, config):
         return None
     crop, _ = focus_crop(frame, config.focus_fraction)
     return crop
+
+
+def maybe_store_scene_memory(kind, crop, answer, config, state, crop_path=None):
+    if not getattr(config, "scene_memory_enabled", True):
+        return
+    if not answer or needs_clearer_view(answer):
+        return
+    store_scene_memory(
+        kind,
+        "scene",
+        crop,
+        answer,
+        crop_path=crop_path or state.last_crop_path,
+        vision_result=state.last_vision_result,
+        plant_id_result=state.last_plant_id_result,
+        ttl_seconds=getattr(config, "scene_memory_ttl_seconds", 3600),
+        max_items=getattr(config, "scene_memory_max_items", 120),
+    )
 
 
 def crop_signature(crop):
@@ -128,10 +146,10 @@ def record_sign_memory(crop, crop_path, config, state, now=None):
 
 def maybe_suppress_sign_prompt(crop, crop_path, config, state):
     if not getattr(config, "sign_memory_enabled", True):
-        return False, None, None
+        return False, None, None, None
     embedding = get_crop_embedding(crop)
     if embedding is None:
-        return False, None, None
+        return False, None, None, None
 
     now = time.monotonic()
     cleanup_old_signs(now, getattr(config, "sign_memory_ttl_seconds", 600))
@@ -143,11 +161,17 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
     )
     if match is None:
         print("sign memory: no similar sign found")
-        return False, None, embedding
+        return False, None, None, None
 
     print(f"sign memory: possible duplicate similarity={similarity:.2f}")
+    suppress_seconds = getattr(config, "sign_duplicate_suppress_seconds", 180)
+    if is_recent_duplicate(match, now, suppress_seconds):
+        cached = match.get("final_answer")
+        print("sign memory: recent duplicate, suppressing prompt")
+        return True, cached, embedding, match
+
     if similarity < getattr(config, "sign_clip_duplicate_threshold", 0.88):
-        return False, None, embedding
+        return False, None, embedding, None
 
     if getattr(config, "sign_gemma_verify_duplicates", True):
         verdict = verify_same_sign(crop_path, match, config)
@@ -161,12 +185,12 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
                 duplicate_threshold=getattr(config, "sign_clip_possible_duplicate_threshold", 0.82),
                 now=now,
             )
-            return True, match.get("final_answer") or None, embedding
+            return True, match.get("final_answer") or None, embedding, match
         print("sign memory: different sign, continuing")
-        return False, None, embedding
+        return False, None, embedding, None
 
     print("sign memory: duplicate threshold reached, continuing without verify")
-    return False, None, embedding
+    return False, None, embedding, None
 
 
 def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text="", record_seconds=None):
@@ -179,6 +203,7 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
             typed_fallback=False,
             record_seconds=record_seconds or getattr(config, "follow_up_timeout_seconds", 8),
             label="recording follow-up",
+            after_tts=True,
         )
         if not heard:
             return "", None, None
@@ -216,6 +241,7 @@ def handle_voice_command(transcript, config, state, camera):
                 typed_fallback=False,
                 record_seconds=getattr(config, "command_record_seconds", 6),
                 label="recording command",
+                after_tts=True,
             )
         command = strip_wake_phrase(
             command,
@@ -233,6 +259,7 @@ def handle_voice_command(transcript, config, state, camera):
                 typed_fallback=False,
                 record_seconds=getattr(config, "command_record_seconds", 6),
                 label="recording command",
+                after_tts=True,
             )
             command = strip_wake_phrase(
                 command,
@@ -307,6 +334,7 @@ def handle_voice_command(transcript, config, state, camera):
             speak(answer)
             if state.last_detected_kind == "sign" or crop_kind == "sign":
                 record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
+            maybe_store_scene_memory(crop_kind, crop, answer, config, state, crop_path)
             return
 
         clarification_prompt = get_clarification_response()
@@ -379,6 +407,7 @@ def handle_voice_command(transcript, config, state, camera):
             speak(answer)
             if state.last_detected_kind == "sign" or crop_kind == "sign":
                 record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
+            maybe_store_scene_memory(crop_kind, crop, answer, config, state, crop_path)
             return
         speak(get_clarification_response())
         return
@@ -399,7 +428,7 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
             if getattr(state, "is_busy", False):
                 time.sleep(0.1)
                 continue
-            print("voice activation: wake phrase detected")
+            print("voice activation: speech captured")
             wake_queue.put(transcript)
             time.sleep(max(0.1, float(getattr(config, "wake_cooldown_seconds", 2))))
         else:
@@ -416,7 +445,7 @@ def handle_follow_up(crop, config, state, camera):
     state.follow_up_timeout_seconds = getattr(config, "follow_up_timeout_seconds", 8)
     try:
         for _ in range(getattr(config, "max_follow_up_turns", 2)):
-            heard = listen(config, typed_fallback=False, record_seconds=state.follow_up_timeout_seconds)
+            heard = listen(config, typed_fallback=False, record_seconds=state.follow_up_timeout_seconds, after_tts=True)
             if not heard:
                 if getattr(config, "follow_up_silence_returns_to_scan", True):
                     state.last_assistant_question_type = "none"
@@ -504,6 +533,7 @@ def handle_follow_up(crop, config, state, camera):
             if needs_clearer_view(answer):
                 state.last_assistant_question_type = "retry_clearer_view"
                 return
+            maybe_store_scene_memory(state.last_detected_kind or "other", crop, answer, config, state)
             state.last_follow_up_offer = None
             if answer_asks_follow_up(answer):
                 state.last_assistant_question_type = "follow_up_offer"
@@ -538,7 +568,7 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         speak(prompt)
         state.awaiting_follow_up_reply = True
         try:
-            heard = listen(config)
+            heard = listen(config, after_tts=True)
         finally:
             state.awaiting_follow_up_reply = False
         ocr_text = read_text(crop) if kind == "sign" else ""
@@ -550,7 +580,7 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         if intent == Intent.REPEAT_LAST_MESSAGE:
             speak(get_repeat_response())
             speak(prompt)
-            heard = listen(config)
+            heard = listen(config, after_tts=True)
             intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
             print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
             state.last_user_transcript = heard
@@ -584,6 +614,8 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
             source = follow_up_source
         if intent == Intent.SPEAK_SLOWER:
             speak("Of course. I’ll keep it slower and brief.")
+            state.last_assistant_question_type = "none"
+            return
 
         if intent in {Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
             answer = describe_current_object(crop, config, state)
@@ -606,6 +638,7 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         else:
             state.last_assistant_question_type = "none"
         handle_follow_up(crop, config, state, camera)
+        maybe_store_scene_memory(kind, crop, answer, config, state, crop_path)
         if kind == "sign":
             record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
     finally:
@@ -686,6 +719,11 @@ def main():
     camera_source_is_stream = isinstance(camera_source, str) and camera_source.lower().startswith(("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://"))
     wake_enabled = not camera_only_mode and (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False))
 
+    preload_thread = threading.Thread(target=preload_whisper_model, args=(config,), daemon=True)
+    preload_thread.start()
+    if wake_enabled:
+        preload_thread.join(timeout=20)
+
     trigger = DwellTrigger(config.dwell_seconds, config.cooldown_seconds)
     state = SessionState(follow_up_timeout_seconds=config.follow_up_timeout_seconds)
     wake_queue = queue.SimpleQueue()
@@ -703,6 +741,8 @@ def main():
                 return
 
             ready_announced = False
+            stream_misses = 0
+            max_stream_misses = 30
             while True:
                 if not camera_only_mode and not state.is_busy:
                     while True:
@@ -715,10 +755,18 @@ def main():
                 frame = camera.read()
                 if frame is None:
                     if camera_source_is_stream:
-                        print(f"Stream frame was unavailable from {camera_source!r}. Check that the Mentra RTMP/HLS publisher is live and the URL is correct.")
-                    else:
-                        print("Camera frame was unavailable. Check macOS camera permission and try again.")
+                        stream_misses += 1
+                        if stream_misses >= max_stream_misses:
+                            print(
+                                f"Stream frame was unavailable from {camera_source!r} for too long. "
+                                "Check that the Mentra RTMP/HLS publisher is live and the URL is correct."
+                            )
+                            return
+                        time.sleep(0.1)
+                        continue
+                    print("Camera frame was unavailable. Check macOS camera permission and try again.")
                     return
+                stream_misses = 0
 
                 if camera_only_mode:
                     if not ready_announced:
@@ -745,22 +793,30 @@ def main():
                         print(f"center crop: {result.kind} ({result.reason})")
                         if trigger.update(result.kind):
                             crop_path = save_debug_crop(result.kind, crop)
-                            remembered = lookup_scene_memory(
-                                result.kind,
-                                "scene",
-                                crop,
-                                ttl_seconds=getattr(config, "scene_memory_ttl_seconds", 3600),
-                            )
+                            remembered = None
+                            if getattr(config, "scene_memory_enabled", True):
+                                remembered = lookup_scene_memory(
+                                    result.kind,
+                                    "scene",
+                                    crop,
+                                    ttl_seconds=getattr(config, "scene_memory_ttl_seconds", 3600),
+                                )
                             if remembered:
                                 print("scene memory: using stored answer")
+                                seen_count = int(remembered.get("seen_count", 2))
                                 state.last_detected_kind = result.kind
                                 state.last_crop_path = crop_path
-                                state.last_core_answer = remembered.get("answer") or ""
-                                state.last_final_answer = remembered.get("answer") or ""
+                                answer = format_remembered_answer(
+                                    remembered.get("answer") or "",
+                                    result.kind,
+                                    seen_count,
+                                )
+                                state.last_core_answer = answer
+                                state.last_final_answer = answer
                                 state.last_answer_time = time.monotonic()
                                 state.last_vision_result = remembered.get("vision_result")
                                 state.last_plant_id_result = restore_plant_id(remembered.get("plant_id_result"))
-                                speak(remembered.get("answer") or "")
+                                speak(answer)
                                 if result.kind == "sign" or state.last_detected_kind == "sign":
                                     record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
                                 draw_focus_box(frame, box)
@@ -768,15 +824,17 @@ def main():
                                     break
                                 continue
                             if result.kind == "sign":
-                                suppressed, cached_answer, _ = maybe_suppress_sign_prompt(crop, crop_path, config, state)
+                                suppressed, cached_answer, _, memory_match = maybe_suppress_sign_prompt(crop, crop_path, config, state)
                                 if suppressed:
                                     if cached_answer:
+                                        seen_count = int((memory_match or {}).get("seen_count", 2))
                                         state.last_detected_kind = "sign"
                                         state.last_crop_path = crop_path
-                                        state.last_core_answer = cached_answer
-                                        state.last_final_answer = cached_answer
+                                        answer = format_remembered_answer(cached_answer, "sign", seen_count)
+                                        state.last_core_answer = answer
+                                        state.last_final_answer = answer
                                         state.last_answer_time = time.monotonic()
-                                        speak(cached_answer)
+                                        speak(answer)
                                     draw_focus_box(frame, box)
                                     if camera.show(frame):
                                         break

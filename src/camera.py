@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import cv2
@@ -164,6 +165,7 @@ class Camera:
         self.source = source
         self._impl = None
         self.opened = False
+        self._lock = threading.RLock()
 
     def __enter__(self):
         if _is_stream_source(self.source):
@@ -182,11 +184,13 @@ class Camera:
         cv2.destroyAllWindows()
 
     def read(self):
-        if self._impl is None:
-            return None
-        return self._impl.read()
+        with self._lock:
+            if self._impl is None:
+                return None
+            return self._impl.read()
 
     def show(self, frame):
-        if self._impl is None:
-            return True
-        return self._impl.show(frame)
+        with self._lock:
+            if self._impl is None:
+                return True
+            return self._impl.show(frame)

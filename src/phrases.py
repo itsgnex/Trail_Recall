@@ -173,3 +173,26 @@ def get_follow_up_offer():
 
 def get_follow_up_missed_response():
     return _pick("follow_up_missed", _FOLLOW_UP_MISSED)
+
+
+def format_remembered_answer(answer, kind="object", seen_count=2):
+    text = (answer or "").strip()
+    if not text:
+        return text
+    lower = text.lower()
+    if any(phrase in lower for phrase in ("seen before", "looked at this", "familiar", "again earlier")):
+        return text
+    if seen_count >= 3:
+        if kind == "sign":
+            lead = "I've seen this sign a few times now. "
+        elif kind == "plant":
+            lead = "I've seen this plant a few times now. "
+        else:
+            lead = "I've seen this a few times now. "
+    elif kind == "sign":
+        lead = "I've seen this sign before. "
+    elif kind == "plant":
+        lead = "I've seen this plant before. "
+    else:
+        lead = "I've seen this before. "
+    return lead + text

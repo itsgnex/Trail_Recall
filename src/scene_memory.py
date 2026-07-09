@@ -64,6 +64,18 @@ def _cleanup(now=None, ttl_seconds=3600):
 def _plant_payload(payload):
     if isinstance(payload, dict):
         return payload
+    if isinstance(payload, PlantIdResult):
+        return {
+            "provider": payload.provider,
+            "success": payload.success,
+            "common_name": payload.common_name,
+            "scientific_name": payload.scientific_name,
+            "family": payload.family,
+            "genus": payload.genus,
+            "score": payload.score,
+            "raw_top_result": payload.raw_top_result,
+            "error": payload.error,
+        }
     return None
 
 

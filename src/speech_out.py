@@ -4,13 +4,20 @@ import subprocess
 
 
 _speaking = threading.Event()
+_last_spoken_text = ""
 
 
 def is_speaking():
     return _speaking.is_set()
 
 
+def last_spoken_text():
+    return _last_spoken_text
+
+
 def speak(text):
+    global _last_spoken_text
+    _last_spoken_text = (text or "").strip()
     print(f"assistant: {text}")
     _speaking.set()
     try:

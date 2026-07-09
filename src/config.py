@@ -56,6 +56,9 @@ class Config:
     mic_listen_timeout: int = 12
     mic_phrase_time_limit: int = 7
     mic_ambient_noise_duration: float = 1.0
+    mic_ambient_refresh_duration: float = 0.25
+    mic_post_tts_delay: float = 0.45
+    mic_phrase_start_pause: float = 0.2
     use_whisper_stt: bool = True
     whisper_model: str = "small.en"
     whisper_record_seconds: int = 5
@@ -75,14 +78,14 @@ class Config:
     voice_activation_mode: bool = True
     wake_mode: bool = True
     wake_phrases: tuple[str, ...] = (
-        "hey trail",
-        "okay trail",
-        "trail recall",
-        "hey assistant",
+        "hey look",
+        "okay look",
         "hey glasses",
+        "hey assistant",
         "hey nova",
+        "can you help",
     )
-    wake_listen_seconds: float = 2.5
+    wake_listen_seconds: float = 3.0
     command_record_seconds: int = 6
     wake_cooldown_seconds: int = 2
     pause_wake_during_tts: bool = True
@@ -175,6 +178,9 @@ class Config:
             mic_listen_timeout=int(os.getenv("MIC_LISTEN_TIMEOUT", profile_default("mic_listen_timeout", "12"))),
             mic_phrase_time_limit=int(os.getenv("MIC_PHRASE_TIME_LIMIT", "7")),
             mic_ambient_noise_duration=float(os.getenv("MIC_AMBIENT_NOISE_DURATION", profile_default("mic_ambient_noise_duration", "1"))),
+            mic_ambient_refresh_duration=float(os.getenv("MIC_AMBIENT_REFRESH_DURATION", "0.25")),
+            mic_post_tts_delay=float(os.getenv("MIC_POST_TTS_DELAY", "0.45")),
+            mic_phrase_start_pause=float(os.getenv("MIC_PHRASE_START_PAUSE", "0.2")),
             use_whisper_stt=env_bool("USE_WHISPER_STT", True),
             whisper_model=os.getenv("WHISPER_MODEL", profile_default("whisper_model", "small.en")),
             whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", profile_default("whisper_record_seconds", "5"))),
@@ -199,18 +205,15 @@ class Config:
             wake_phrases=env_list(
                 "WAKE_PHRASES",
                 (
-                    "hey trail",
-                    "trail",
-                    "trail recall",
-                    "hey assistant",
-                    "assistant",
+                    "hey look",
+                    "okay look",
                     "hey glasses",
+                    "hey assistant",
                     "hey nova",
-                    "nova",
                     "can you help",
                 ),
             ),
-            wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", profile_default("wake_listen_seconds", "2.5"))),
+            wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", profile_default("wake_listen_seconds", "3.0"))),
             command_record_seconds=int(os.getenv("COMMAND_RECORD_SECONDS", profile_default("command_record_seconds", "6"))),
             wake_cooldown_seconds=int(os.getenv("WAKE_COOLDOWN_SECONDS", profile_default("wake_cooldown_seconds", "2"))),
             pause_wake_during_tts=env_bool("PAUSE_WAKE_DURING_TTS", True),

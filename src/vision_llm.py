@@ -8,7 +8,6 @@ from .ollama_client import generate_json
 from .openrouter_client import generate as generate_openrouter
 
 MAX_IMAGE_EDGE = 384
-VISION_API_TIMEOUT = 4
 
 
 def crop_to_base64(crop):
@@ -18,6 +17,10 @@ def crop_to_base64(crop):
         crop = cv2.resize(crop, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
     ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
     return base64.b64encode(encoded).decode() if ok else ""
+
+
+def _vision_timeout(config):
+    return int(getattr(config, "openrouter_timeout", 8))
 
 
 def _parse_json(text):
@@ -44,10 +47,6 @@ def crop_signature(crop):
     return hashlib.sha1(small.tobytes()).hexdigest()
 
 
-def _vision_timeout(config):
-    return min(int(getattr(config, "openrouter_timeout", 8)), VISION_API_TIMEOUT)
-
-
 def _openrouter_json(prompt, config, images=None, label="vision"):
     openrouter_model = getattr(config, "openrouter_model", "google/gemini-3.1-flash-lite")
     if images:
@@ -64,9 +63,8 @@ def _local_json(prompt, config, images=None):
     local_model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:1b"))
     kind = "image" if images else "text"
     print(f"local vision fallback: calling {local_model} for {kind}")
-    timeout = min(
-        getattr(config, "ollama_image_timeout", 45) if images else getattr(config, "ollama_text_timeout", 20),
-        VISION_API_TIMEOUT,
+    timeout = (
+        getattr(config, "ollama_image_timeout", 45) if images else getattr(config, "ollama_text_timeout", 20)
     )
     return generate_json(prompt, config, timeout=timeout, model=local_model, images=images)
 
