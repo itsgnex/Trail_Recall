@@ -130,6 +130,29 @@ _FOLLOW_UP_MISSED = [
     "No problem, I’ll keep watching.",
 ]
 
+_TRAIL_STARTED = [
+    "Got it. Trail recording started.",
+    "Okay. I've started recording your trail.",
+    "Started. I'm recording the trail now.",
+]
+
+_TRAIL_SAVED = [
+    "Trail saved. You're all set.",
+    "Okay. Your trail is saved.",
+    "Done. I saved the trail.",
+]
+
+_TRAIL_NAVIGATE = [
+    "Okay. Starting navigate back now.",
+    "Got it. I'll guide you back along the trail.",
+    "Starting navigate back. Follow my directions.",
+]
+
+_TRAIL_FAILED = [
+    "Sorry, I couldn't reach the phone to do that.",
+    "I couldn't connect to the trail app on your phone.",
+]
+
 
 def _pick(category, phrases):
     last = _last.get(category)
@@ -173,6 +196,22 @@ def get_follow_up_offer():
 
 def get_follow_up_missed_response():
     return _pick("follow_up_missed", _FOLLOW_UP_MISSED)
+
+
+def get_trail_started_response():
+    return _pick("trail_started", _TRAIL_STARTED)
+
+
+def get_trail_saved_response():
+    return _pick("trail_saved", _TRAIL_SAVED)
+
+
+def get_trail_navigate_response():
+    return _pick("trail_navigate", _TRAIL_NAVIGATE)
+
+
+def get_trail_failed_response():
+    return _pick("trail_failed", _TRAIL_FAILED)
 
 
 def format_remembered_answer(answer, kind="object", seen_count=2):

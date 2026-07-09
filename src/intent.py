@@ -18,6 +18,9 @@ class Intent(Enum):
     STOP_LISTENING = "STOP_LISTENING"
     REPEAT_LAST_MESSAGE = "REPEAT_LAST_MESSAGE"
     SPEAK_SLOWER = "SPEAK_SLOWER"
+    START_TRAIL = "START_TRAIL"
+    STOP_TRAIL = "STOP_TRAIL"
+    NAVIGATE_BACK = "NAVIGATE_BACK"
     GENERAL_QUESTION = "GENERAL_QUESTION"
     ASK_CLARIFICATION = "ASK_CLARIFICATION"
 
@@ -84,8 +87,31 @@ def is_general_question(text):
     return has(text, r"\b(what is|what are|who is|who are|why is|why are|how do|how does|tell me about)\b")
 
 
+def is_trail_command(text):
+    text = f" {_normalize_trail_text(text)} "
+    if re.search(r"\b(start|begin|record)\s+(the\s+)?(trail|trails|tracking)\b", text):
+        return Intent.START_TRAIL
+    if re.search(r"\b(stop|end|finish)\s+(the\s+)?(trail|trails|tracking|recording)\b", text):
+        return Intent.STOP_TRAIL
+    if re.search(
+        r"\b(take me back|navigate back|lead me back|guide me back|bring me back|go back( to (the )?(start|trail))?)\b",
+        text,
+    ):
+        return Intent.NAVIGATE_BACK
+    return None
+
+
+def _normalize_trail_text(text):
+    text = (text or "").lower()
+    text = re.sub(r"[^\w\s']", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def classify_intent_fallback(text, detected_kind=None, last_question_type="none"):
     text = f" {text.lower()} "
+    trail_intent = is_trail_command(text)
+    if trail_intent is not None:
+        return trail_intent
     permission_reply = infer_permission_reply(text)
     if last_question_type in {"initial_permission", "follow_up_offer"} and permission_reply == "yes":
         if last_question_type == "follow_up_offer" and detected_kind == "plant":
@@ -98,6 +124,9 @@ def classify_intent_fallback(text, detected_kind=None, last_question_type="none"
     if permission_reply == "no":
         return Intent.CANCEL
     if permission_reply == "stop":
+        trail_intent = is_trail_command(text)
+        if trail_intent is not None:
+            return trail_intent
         return Intent.STOP_LISTENING
     if permission_reply == "repeat":
         return Intent.REPEAT_LAST_MESSAGE
@@ -156,6 +185,9 @@ def classify_intent_with_source(text, config=None, detected_kind=None, last_mess
     if text and permission_reply == "no":
         return Intent.CANCEL, "permission_rule"
     if text and permission_reply == "stop":
+        trail_intent = is_trail_command(text)
+        if trail_intent is not None:
+            return trail_intent, "trail_rule"
         return Intent.STOP_LISTENING, "permission_rule"
     if text and permission_reply == "repeat":
         return Intent.REPEAT_LAST_MESSAGE, "permission_rule"
@@ -167,6 +199,9 @@ def classify_intent_with_source(text, config=None, detected_kind=None, last_mess
         return Intent.WHAT_AM_I_LOOKING_AT, "rule"
     if text and is_acknowledgement(text):
         return Intent.CANCEL, "rule"
+    trail_intent = is_trail_command(text)
+    if trail_intent is not None:
+        return trail_intent, "trail_rule"
     if text and is_general_question(text):
         return Intent.GENERAL_QUESTION, "rule"
     if text and last_question_type in {"initial_permission", "follow_up_offer"} and detected_kind in {"plant", "sign"} and is_help_prompt(last_message) and is_confirmation_reply(text):
@@ -266,6 +301,8 @@ def _demo():
     assert classify_intent_fallback("stop", "sign") == Intent.STOP_LISTENING
     assert classify_intent_fallback("try again", "plant") == Intent.IDENTIFY_CURRENT_OBJECT
     assert confirmation_action("plant") == Intent.EXPLAIN_PLANT
+    assert is_trail_command("start the trail") == Intent.START_TRAIL
+    assert is_trail_command("take me back") == Intent.NAVIGATE_BACK
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 import os
+import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -8,6 +10,14 @@ import numpy as np
 
 
 STREAM_SCHEMES = ("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://")
+DEFAULT_STREAM_WIDTH = 640
+DEFAULT_STREAM_HEIGHT = 360
+MAX_STALE_FRAME_SECONDS = 4.0
+STREAM_GLITCH_HOLD_SECONDS = 0.75
+OPENCV_STREAM_STALE_SECONDS = 1.5
+OPENCV_STREAM_ENV = "OPENCV_FFMPEG_CAPTURE_OPTIONS"
+DEFAULT_RTMP_CAPTURE_OPTIONS = "rtmp_live;live|rw_timeout;8000000"
+OPENCV_FRAME_DRAIN = int(os.getenv("MENTRA_STREAM_FRAME_DRAIN", "2"))
 
 
 def discover_cameras(max_index=10):
@@ -63,6 +73,125 @@ def _is_stream_source(source):
     return isinstance(source, str) and source.lower().startswith(STREAM_SCHEMES)
 
 
+def _is_hls_source(source):
+    lower = (source or "").lower()
+    return lower.startswith(("http://", "https://")) and (".m3u8" in lower or "/live/" in lower)
+
+
+def resolve_ingest_url(source):
+    """Prefer HLS for mediamtx RTMP URLs — Mac ffmpeg RTMP pipe ingest is often flaky."""
+    _, ingest = split_stream_urls(source)
+    return ingest
+
+
+def split_stream_urls(source):
+    """Return (publish_wait_url, ingest_url). Default: RTMP ingest (low latency). Set MENTRA_USE_HLS_INGEST=1 for HLS."""
+    if not isinstance(source, str):
+        return source, source
+    text = source.strip()
+    match = re.match(r"rtmp://([^/]+)/(.+)", text, re.IGNORECASE)
+    if not match:
+        return text, text
+    rtmp = text
+    use_hls = os.getenv("MENTRA_USE_HLS_INGEST", "").strip().lower() in {"1", "true", "yes"}
+    if not use_hls:
+        print(f"Stream ingest: RTMP ({rtmp})")
+        return rtmp, rtmp
+    host_port, path = match.group(1), match.group(2).rstrip("/")
+    host = host_port.split(":")[0]
+    hls = f"http://{host}:8888/{path}/index.m3u8"
+    print(f"Stream ingest: HLS ({hls}) — set MENTRA_USE_HLS_INGEST=0 to use RTMP instead")
+    print(f"Stream wait: probing RTMP publisher at {rtmp}")
+    return rtmp, hls
+
+
+def _ffmpeg_input_args(source):
+    args = []
+    lower = source.lower()
+    if lower.startswith("rtmp://") or lower.startswith("rtmps://"):
+        args.extend(["-rw_timeout", "5000000", "-rtmp_live", "live"])
+    if lower.startswith(("http://", "https://")):
+        args.extend(
+            [
+                "-reconnect",
+                "1",
+                "-reconnect_streamed",
+                "1",
+                "-reconnect_delay_max",
+                "2",
+            ]
+        )
+        if _is_hls_source(source):
+            args.extend(
+                [
+                    "-live_start_index",
+                    "-1",
+                ]
+            )
+    return args
+
+
+def wait_for_publisher(source, max_wait_seconds=180, poll_seconds=3, ingest_source=None):
+    """Block until the stream publisher is live (RTMP probe), optionally until HLS is readable."""
+    if not _is_stream_source(source):
+        return True
+
+    print(f"Waiting for glasses stream at {source!r}")
+    print("On phone: Trail Return Lab -> Glasses -> Start everything (connect glasses first)")
+    deadline = time.monotonic() + max_wait_seconds
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        if _probe_stream_frame(source):
+            if ingest_source and ingest_source != source:
+                for hls_try in range(12):
+                    if _probe_stream_frame(ingest_source, timeout_seconds=6):
+                        print("Stream publisher is live (HLS ready).")
+                        return True
+                    time.sleep(0.5)
+                print("Stream publisher is live (RTMP up; HLS may need a few seconds).")
+                return True
+            print("Stream publisher is live.")
+            return True
+        remaining = int(deadline - time.monotonic())
+        print(f"  no stream yet (attempt {attempt}, ~{remaining}s left) — start publishing on the phone")
+        time.sleep(poll_seconds)
+
+    print(
+        "Timed out waiting for stream. Checklist:\n"
+        "  1. Terminal 1: ./scripts/run_rtmp_server.sh is running (only one mediamtx instance)\n"
+        "  2. Phone app: Glasses -> Start everything (RTMP publishing)\n"
+        "  3. Phone and Mac on same Wi-Fi\n"
+        "  4. Stream URL on phone matches rtmp://YOUR_MAC_IP:1935/live/mentra-live"
+    )
+    return False
+
+
+def _probe_stream_frame(source, timeout_seconds=8):
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        *_ffmpeg_input_args(source),
+        "-i",
+        source,
+        "-an",
+        "-sn",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout_seconds)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 class _LocalCamera:
     def __init__(self, source):
         self.source = source
@@ -90,43 +219,235 @@ class _LocalCamera:
         return cv2.waitKey(1) & 0xFF == ord("q")
 
 
-class _StreamCamera:
-    def __init__(self, source, width=640, height=360):
+class _OpenCvStreamCamera:
+    """Read network streams with cv2.VideoCapture — smooth RTMP ingest with light buffering."""
+
+    def __init__(self, source, width=DEFAULT_STREAM_WIDTH, height=DEFAULT_STREAM_HEIGHT):
         self.source = source
         self.width = width
         self.height = height
+        self.capture = None
+        self.opened = False
+        self._last_frame = None
+        self._last_frame_at = 0.0
+        self._miss_count = 0
+
+    def __enter__(self):
+        if not self._open_capture():
+            self.opened = False
+            return self
+        for _ in range(50):
+            frame = self._read_latest_once()
+            if frame is not None:
+                self._last_frame = frame
+                self._last_frame_at = time.monotonic()
+                self.opened = True
+                print("stream ingest: OpenCV capture live")
+                return self
+            time.sleep(0.1)
+        self._release_capture()
+        self.opened = False
+        return self
+
+    def _open_capture(self):
+        self._release_capture()
+        lower = self.source.lower()
+        if lower.startswith(("rtmp://", "rtmps://")):
+            os.environ[OPENCV_STREAM_ENV] = os.getenv(OPENCV_STREAM_ENV, DEFAULT_RTMP_CAPTURE_OPTIONS)
+        self.capture = cv2.VideoCapture(self.source, cv2.CAP_FFMPEG)
+        if self.capture is None or not self.capture.isOpened():
+            return False
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 3)
+        return True
+
+    def _release_capture(self):
+        if self.capture is not None:
+            self.capture.release()
+            self.capture = None
+
+    def __exit__(self, *_):
+        self._release_capture()
+
+    def _resize(self, frame):
+        if frame is None:
+            return None
+        height, width = frame.shape[:2]
+        if width == self.width and height == self.height:
+            return frame.copy()
+        return cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_LINEAR)
+
+    def _read_latest_once(self):
+        if self.capture is None or not self.capture.isOpened():
+            return None
+        latest = None
+        drain = max(1, OPENCV_FRAME_DRAIN)
+        for _ in range(drain):
+            ok, frame = self.capture.read()
+            if ok and frame is not None:
+                latest = frame
+            elif latest is not None:
+                break
+            else:
+                return None
+        return self._resize(latest)
+
+    def read(self):
+        frame = self._read_latest_once()
+        if frame is not None:
+            self._miss_count = 0
+            self._last_frame = frame
+            self._last_frame_at = time.monotonic()
+            return frame
+
+        self._miss_count += 1
+        if self._miss_count in {15, 45}:
+            print("stream ingest: reopening OpenCV capture")
+            self._open_capture()
+        stale = self._stale_frame()
+        if stale is not None:
+            return stale
+        return None
+
+    def _stale_frame(self):
+        if self._last_frame is None:
+            return None
+        if time.monotonic() - self._last_frame_at > OPENCV_STREAM_STALE_SECONDS:
+            return None
+        return self._last_frame.copy()
+
+    def show(self, frame):
+        cv2.imshow("Gaze Assistant", frame)
+        return cv2.waitKey(1) & 0xFF == ord("q")
+
+    def seed_frame(self):
+        return None if self._last_frame is None else self._last_frame.copy()
+
+
+class _StreamCamera:
+    def __init__(
+        self,
+        source,
+        width=DEFAULT_STREAM_WIDTH,
+        height=DEFAULT_STREAM_HEIGHT,
+        target_fps=10,
+        fallback_source=None,
+    ):
+        self.source = source
+        self.fallback_source = fallback_source
+        self.width = width
+        self.height = height
+        self.target_fps = target_fps
         self.process = None
         self.opened = False
         self._frame_size = self.width * self.height * 3
+        self._last_frame = None
+        self._last_frame_at = 0.0
+        self._restart_count = 0
+        self._next_restart_at = 0.0
+        self._apply_source_mode(source)
+
+    def _apply_source_mode(self, source):
+        self._is_hls = _is_hls_source(source)
+        self._max_stale_seconds = 6.0 if self._is_hls else MAX_STALE_FRAME_SECONDS
 
     def __enter__(self):
-        cmd = [
+        if self._wait_for_first_frame():
+            return self
+        if self.fallback_source and self.fallback_source != self.source:
+            print(f"stream ingest: falling back to {self.fallback_source}")
+            self._stop_process()
+            self.source = self.fallback_source
+            self._apply_source_mode(self.source)
+            self._restart_count = 0
+            self._next_restart_at = 0.0
+            if self._wait_for_first_frame():
+                return self
+        self.opened = False
+        return self
+
+    def _wait_for_first_frame(self):
+        self._start_process()
+        for _ in range(40):
+            frame = self._read_frame_once()
+            if frame is not None:
+                self._last_frame = frame
+                self._last_frame_at = time.monotonic()
+                self.opened = True
+                return True
+            if self.process is not None and self.process.poll() is not None:
+                self._start_process()
+            time.sleep(0.25)
+        self.opened = False
+        return False
+
+    def __exit__(self, *_):
+        self._stop_process()
+
+    def _ffmpeg_cmd(self):
+        scale = f"scale={self.width}:{self.height},setsar=1"
+        if self._is_hls:
+            # HLS segments arrive in bursts; avoid fps filter dropping the whole pipe.
+            video_filter = scale
+        else:
+            video_filter = scale
+        return [
             "ffmpeg",
             "-nostdin",
             "-hide_banner",
             "-loglevel",
             "error",
+            *_ffmpeg_input_args(self.source),
             "-fflags",
-            "nobuffer",
+            "+genpts+discardcorrupt",
             "-flags",
             "low_delay",
+            "-thread_queue_size",
+            "512",
+            "-probesize",
+            "500000",
+            "-analyzeduration",
+            "1000000",
             "-i",
             self.source,
             "-an",
             "-sn",
             "-vf",
-            f"scale={self.width}:{self.height},setsar=1",
+            video_filter,
+            "-r",
+            str(self.target_fps),
             "-pix_fmt",
             "bgr24",
             "-f",
             "rawvideo",
             "pipe:1",
         ]
-        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self.opened = self.process.poll() is None and self.process.stdout is not None
-        return self
 
-    def __exit__(self, *_):
+    def _start_process(self):
+        self._stop_process()
+        self.process = subprocess.Popen(
+            self._ffmpeg_cmd(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        time.sleep(0.2)
+        if self.process.poll() is not None:
+            err = ""
+            try:
+                err = (self.process.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            self.process = None
+            self.opened = False
+            if err:
+                print(f"stream ingest: ffmpeg failed: {err[:240]}")
+            return
+        self.opened = self.process.stdout is not None
+        self._restart_count += 1
+        if self._restart_count > 1:
+            print(f"stream ingest: restarted ffmpeg ({self._restart_count - 1} reconnects)")
+
+    def _stop_process(self):
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try:
@@ -148,32 +469,91 @@ class _StreamCamera:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def read(self):
+    def _restart_if_needed(self):
+        if self.process is not None and self.process.poll() is None:
+            return True
+        if self._restart_count >= 30:
+            return False
+        now = time.monotonic()
+        if now < self._next_restart_at:
+            time.sleep(0.05)
+            return self.process is not None and self.process.poll() is None
+        delay = min(5.0, 0.5 * self._restart_count)
+        self._next_restart_at = now + delay
+        time.sleep(delay)
+        self._start_process()
+        return self.opened
+
+    def _read_frame_once(self):
         raw = self._read_exact(self._frame_size)
         if not raw:
             return None
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
-        return frame.copy()
+        return np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3)).copy()
+
+    def read(self):
+        raw = self._read_exact(self._frame_size)
+        if not raw and not self._restart_if_needed():
+            return self._stale_frame()
+        if not raw:
+            raw = self._read_exact(self._frame_size)
+        if not raw:
+            return self._stale_frame()
+
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3)).copy()
+        self._last_frame = frame
+        self._last_frame_at = time.monotonic()
+        return frame
+
+    def _stale_frame(self):
+        if self._last_frame is None:
+            return None
+        if time.monotonic() - self._last_frame_at > self._max_stale_seconds:
+            return None
+        return self._last_frame.copy()
 
     def show(self, frame):
         cv2.imshow("Gaze Assistant", frame)
         return cv2.waitKey(1) & 0xFF == ord("q")
 
+    def seed_frame(self):
+        return None if self._last_frame is None else self._last_frame.copy()
+
 
 class Camera:
-    def __init__(self, source):
+    def __init__(self, source, fallback_source=None):
         self.source = source
+        self.fallback_source = fallback_source
         self._impl = None
         self.opened = False
         self._lock = threading.RLock()
+        self._last_good_frame = None
+        self._last_good_frame_at = 0.0
+        self._is_stream = _is_stream_source(source)
 
     def __enter__(self):
         if _is_stream_source(self.source):
-            self._impl = _StreamCamera(self.source)
+            prefer_opencv = os.getenv("MENTRA_STREAM_BACKEND", "opencv").strip().lower() != "ffmpeg"
+            use_opencv = prefer_opencv and self.source.lower().startswith(("rtmp://", "rtmps://", "http://", "https://"))
+            if use_opencv:
+                self._impl = _OpenCvStreamCamera(self.source)
+                self._impl.__enter__()
+                if not self._impl.opened:
+                    print("stream ingest: OpenCV failed, trying ffmpeg pipe")
+                    self._impl.__exit__(None, None, None)
+                    self._impl = _StreamCamera(self.source, fallback_source=self.fallback_source)
+                    self._impl.__enter__()
+            else:
+                self._impl = _StreamCamera(self.source, fallback_source=self.fallback_source)
+                self._impl.__enter__()
         else:
             self._impl = _LocalCamera(self.source)
-        self._impl.__enter__()
+            self._impl.__enter__()
         self.opened = bool(getattr(self._impl, "opened", False))
+        if self.opened and hasattr(self._impl, "seed_frame"):
+            seed = self._impl.seed_frame()
+            if seed is not None:
+                self._last_good_frame = seed
+                self._last_good_frame_at = time.monotonic()
         if self.opened:
             cv2.namedWindow("Gaze Assistant", cv2.WINDOW_NORMAL)
         return self
@@ -187,7 +567,16 @@ class Camera:
         with self._lock:
             if self._impl is None:
                 return None
-            return self._impl.read()
+            frame = self._impl.read()
+            if frame is not None:
+                self._last_good_frame = frame
+                self._last_good_frame_at = time.monotonic()
+                return frame
+            if self._last_good_frame is not None:
+                hold = STREAM_GLITCH_HOLD_SECONDS if self._is_stream else MAX_STALE_FRAME_SECONDS
+                if time.monotonic() - self._last_good_frame_at <= hold:
+                    return self._last_good_frame.copy()
+            return None
 
     def show(self, frame):
         with self._lock:

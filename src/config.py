@@ -80,6 +80,8 @@ class Config:
     wake_phrases: tuple[str, ...] = (
         "hey look",
         "okay look",
+        "hey trail",
+        "okay trail",
         "hey glasses",
         "hey assistant",
         "hey nova",
@@ -107,6 +109,7 @@ class Config:
     scene_memory_enabled: bool = True
     scene_memory_ttl_seconds: int = 3600
     scene_memory_max_items: int = 120
+    android_trail_base_url: str = ""
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
@@ -207,6 +210,8 @@ class Config:
                 (
                     "hey look",
                     "okay look",
+                    "hey trail",
+                    "okay trail",
                     "hey glasses",
                     "hey assistant",
                     "hey nova",
@@ -235,4 +240,5 @@ class Config:
             scene_memory_enabled=env_bool("SCENE_MEMORY_ENABLED", True),
             scene_memory_ttl_seconds=int(os.getenv("SCENE_MEMORY_TTL_SECONDS", "3600")),
             scene_memory_max_items=int(os.getenv("SCENE_MEMORY_MAX_ITEMS", "120")),
+            android_trail_base_url=os.getenv("ANDROID_TRAIL_URL", "").strip(),
         )

@@ -8,7 +8,7 @@ import time
 import cv2
 import numpy as np
 
-from src.camera import Camera, choose_camera
+from src.camera import Camera, choose_camera, split_stream_urls, wait_for_publisher
 from src.config import Config
 from src.intent import Intent, classify_intent_with_source
 from src.clip_classifier import get_crop_embedding
@@ -25,12 +25,18 @@ from src.phrases import (
     get_unclear_sign_response,
     get_wake_check_response,
     format_remembered_answer,
+    get_trail_started_response,
+    get_trail_saved_response,
+    get_trail_navigate_response,
+    get_trail_failed_response,
 )
+from src.audio_http import TtsHttpServer
 from src.session_state import SessionState
 from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
 from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
 from src.speech_out import is_speaking, speak
+from src.trail_phone import send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
 from src.vision_llm import verify_same_sign
@@ -225,6 +231,25 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
         state.awaiting_follow_up_reply = False
 
 
+def handle_trail_intent(intent, config):
+    if intent == Intent.START_TRAIL:
+        ok, detail = send_trail_command("start", config)
+        if not ok:
+            speak(f"{get_trail_failed_response()} {detail}")
+        return True
+    if intent == Intent.STOP_TRAIL:
+        ok, detail = send_trail_command("stop", config)
+        if not ok:
+            speak(f"{get_trail_failed_response()} {detail}")
+        return True
+    if intent == Intent.NAVIGATE_BACK:
+        ok, detail = send_trail_command("navigate-back", config)
+        if not ok:
+            speak(f"{get_trail_failed_response()} {detail}")
+        return True
+    return False
+
+
 def handle_voice_command(transcript, config, state, camera):
     state.is_busy = True
     state.is_processing_command = True
@@ -297,6 +322,8 @@ def handle_voice_command(transcript, config, state, camera):
             return
         if intent == Intent.SPEAK_SLOWER:
             speak("Of course. I’ll keep it slower and brief.")
+            return
+        if handle_trail_intent(intent, config):
             return
         if intent == Intent.MORE_DETAIL:
             answer = generate_more_detail_response(state, config)
@@ -372,6 +399,8 @@ def handle_voice_command(transcript, config, state, camera):
             return
         if intent == Intent.SPEAK_SLOWER:
             speak("Of course. I’ll keep it slower and brief.")
+            return
+        if handle_trail_intent(intent, config):
             return
         if intent == Intent.MORE_DETAIL:
             answer = generate_more_detail_response(state, config)
@@ -714,6 +743,9 @@ def main():
     )
     if camera_source is None:
         return
+    stream_wait_source = camera_source
+    if isinstance(camera_source, str):
+        stream_wait_source, camera_source = split_stream_urls(camera_source)
 
     camera_only_mode = bool(args.camera_only)
     camera_source_is_stream = isinstance(camera_source, str) and camera_source.lower().startswith(("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://"))
@@ -726,6 +758,8 @@ def main():
 
     trigger = DwellTrigger(config.dwell_seconds, config.cooldown_seconds)
     state = SessionState(follow_up_timeout_seconds=config.follow_up_timeout_seconds)
+    tts_server = TtsHttpServer(host="0.0.0.0", port=8765).start()
+    print("TTS server listening on http://0.0.0.0:8765/command (for glasses audio)")
     wake_queue = queue.SimpleQueue()
     stop_event = threading.Event()
     last_analysis_signature = None
@@ -735,14 +769,23 @@ def main():
         wake_thread.start()
 
     try:
-        with Camera(camera_source) as camera:
+        if camera_source_is_stream and not wait_for_publisher(
+            stream_wait_source,
+            ingest_source=camera_source if camera_source != stream_wait_source else None,
+        ):
+            return
+
+        with Camera(
+            camera_source,
+            fallback_source=stream_wait_source if stream_wait_source != camera_source else None,
+        ) as camera:
             if not camera.opened:
                 print(f"Could not open camera source {camera_source!r}. Try python main.py to scan cameras, or use python main.py --camera 1.")
                 return
 
             ready_announced = False
             stream_misses = 0
-            max_stream_misses = 30
+            max_stream_misses = 600
             while True:
                 if not camera_only_mode and not state.is_busy:
                     while True:
@@ -759,10 +802,12 @@ def main():
                         if stream_misses >= max_stream_misses:
                             print(
                                 f"Stream frame was unavailable from {camera_source!r} for too long. "
-                                "Check that the Mentra RTMP/HLS publisher is live and the URL is correct."
+                                "Phone may have stopped publishing — reopen Glasses -> Start everything."
                             )
                             return
-                        time.sleep(0.1)
+                        if stream_misses % 100 == 1:
+                            print("Stream gap — waiting for frames (keep phone Mentra session running)...")
+                        time.sleep(0.02)
                         continue
                     print("Camera frame was unavailable. Check macOS camera permission and try again.")
                     return
