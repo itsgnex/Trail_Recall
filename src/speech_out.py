@@ -5,6 +5,8 @@ import threading
 import urllib.parse
 import urllib.request
 
+from .audio_http import enqueue_glasses_speech
+
 
 _speaking = threading.Event()
 _last_spoken_text = ""
@@ -28,10 +30,10 @@ def _mirror_to_android_glasses(text):
         with urllib.request.urlopen(request, timeout=8) as response:
             ok = 200 <= response.status < 300
             if ok:
-                print("glasses audio: sent to phone for Bluetooth playback")
+                print("glasses audio: sent to phone trail server for Bluetooth playback")
             return ok
     except Exception as exc:
-        print(f"glasses audio: phone playback failed ({exc})")
+        print(f"glasses audio: phone trail server unavailable ({exc})")
         return False
 
 
@@ -49,12 +51,13 @@ def speak(text):
     print(f"assistant: {text}")
     _speaking.set()
     try:
-        if _mirror_to_android_glasses(_last_spoken_text):
-            return
         if _glasses_audio_enabled():
+            if _mirror_to_android_glasses(_last_spoken_text):
+                return
+            enqueue_glasses_speech(_last_spoken_text)
             print(
-                "glasses audio: Mac speaker muted (ANDROID_TRAIL_URL set). "
-                "Keep phone on Glasses -> Start everything and glasses connected via Bluetooth."
+                "glasses audio: queued on Mac :8765/pending — phone picks this up while streaming "
+                "(Glasses -> Start everything)"
             )
             return
         if shutil.which("say"):

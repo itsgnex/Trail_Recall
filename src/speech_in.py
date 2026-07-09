@@ -282,8 +282,33 @@ def _transcribe_with_google(audio):
     return recognizer.recognize_google(audio)
 
 
+def _record_glasses_audio(config, phrase_time_limit, quiet=False, label="recording", fixed_duration=False):
+    from .mic_ingest import glasses_mic_buffer
+
+    seconds = float(phrase_time_limit)
+    timeout = float(getattr(config, "mic_listen_timeout", 12))
+    if not quiet:
+        print(f"{label} from glasses mic for {seconds:.1f} seconds...")
+    pcm = glasses_mic_buffer().read_seconds(seconds, timeout=timeout)
+    if not pcm:
+        if not quiet:
+            print("Glasses mic: no audio yet — keep Glasses -> Start everything running on the phone.")
+        return ""
+    if not quiet:
+        print("glasses mic: captured audio chunk")
+    try:
+        import speech_recognition as sr
+
+        return sr.AudioData(pcm, 16000, 2)
+    except Exception as exc:
+        print(f"Glasses mic capture failed: {exc}")
+        return ""
+
+
 def _record_audio(config, phrase_time_limit, typed_fallback=True, quiet=False, label="recording", mic_index=None, fixed_duration=False, after_tts=False):
     _wait_after_tts(config, after_tts)
+    if getattr(config, "use_glasses_mic", False):
+        return _record_glasses_audio(config, phrase_time_limit, quiet, label, fixed_duration)
     with _audio_lock:
         last_error = None
         for attempt in range(2):
@@ -455,7 +480,7 @@ def listen_for_wake_phrase(mic_index=None, config=None, state=None):
             print("wake phrase not detected")
         return None
 
-    if _is_assistant_echo(normalized):
+    if not is_wake_check_command(normalized) and _is_assistant_echo(normalized):
         print(f'wake rejected: assistant echo ("{normalized}")')
         return None
 

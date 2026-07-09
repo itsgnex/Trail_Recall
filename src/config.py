@@ -110,6 +110,7 @@ class Config:
     scene_memory_ttl_seconds: int = 3600
     scene_memory_max_items: int = 120
     android_trail_base_url: str = ""
+    use_glasses_mic: bool = False
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
@@ -139,6 +140,17 @@ class Config:
                 "mic_ambient_noise_duration": "1.0",
             },
             "balanced": {},
+            "accurate": {
+                "whisper_model": "medium.en",
+                "whisper_record_seconds": "6",
+                "whisper_short_reply_mode": "false",
+                "whisper_use_vad": "true",
+                "wake_listen_seconds": "3.5",
+                "command_record_seconds": "6",
+                "wake_cooldown_seconds": "1",
+                "mic_listen_timeout": "14",
+                "mic_ambient_noise_duration": "1.0",
+            },
         }.get(voice_profile, {})
 
         def profile_default(name, default):
@@ -241,4 +253,5 @@ class Config:
             scene_memory_ttl_seconds=int(os.getenv("SCENE_MEMORY_TTL_SECONDS", "3600")),
             scene_memory_max_items=int(os.getenv("SCENE_MEMORY_MAX_ITEMS", "120")),
             android_trail_base_url=os.getenv("ANDROID_TRAIL_URL", "").strip(),
+            use_glasses_mic=env_bool("USE_GLASSES_MIC", True),
         )

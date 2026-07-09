@@ -29,11 +29,11 @@ cp "$BASE_CFG" "$GEN_CFG"
 sed -i '' \
   -e 's/hlsAlwaysRemux: false/hlsAlwaysRemux: true/' \
   -e 's/hlsPartDuration: 200ms/hlsPartDuration: 100ms/' \
-  -e 's/hlsSegmentCount: 7/hlsSegmentCount: 4/' \
+  -e 's/hlsSegmentCount: 4/hlsSegmentCount: 7/' \
   "$GEN_CFG" 2>/dev/null || sed -i \
   -e 's/hlsAlwaysRemux: false/hlsAlwaysRemux: true/' \
   -e 's/hlsPartDuration: 200ms/hlsPartDuration: 100ms/' \
-  -e 's/hlsSegmentCount: 7/hlsSegmentCount: 4/' \
+  -e 's/hlsSegmentCount: 4/hlsSegmentCount: 7/' \
   "$GEN_CFG"
 
 echo "RTMP publish URL: rtmp://$HOST_IP:1935/$STREAM_PATH"

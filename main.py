@@ -31,12 +31,14 @@ from src.phrases import (
     get_trail_failed_response,
 )
 from src.audio_http import TtsHttpServer
+from src.mic_ingest import MicIngestServer, glasses_mic_buffer
+from src.rtmp_audio_ingest import RtmpAudioIngest
 from src.session_state import SessionState
 from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
 from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
 from src.speech_out import is_speaking, speak
-from src.trail_phone import send_trail_command
+from src.trail_phone import check_trail_health, format_trail_error, send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
 from src.vision_llm import verify_same_sign
@@ -235,17 +237,17 @@ def handle_trail_intent(intent, config):
     if intent == Intent.START_TRAIL:
         ok, detail = send_trail_command("start", config)
         if not ok:
-            speak(f"{get_trail_failed_response()} {detail}")
+            speak(format_trail_error(detail))
         return True
     if intent == Intent.STOP_TRAIL:
         ok, detail = send_trail_command("stop", config)
         if not ok:
-            speak(f"{get_trail_failed_response()} {detail}")
+            speak(format_trail_error(detail))
         return True
     if intent == Intent.NAVIGATE_BACK:
         ok, detail = send_trail_command("navigate-back", config)
         if not ok:
-            speak(f"{get_trail_failed_response()} {detail}")
+            speak(format_trail_error(detail))
         return True
     return False
 
@@ -760,6 +762,26 @@ def main():
     state = SessionState(follow_up_timeout_seconds=config.follow_up_timeout_seconds)
     tts_server = TtsHttpServer(host="0.0.0.0", port=8765).start()
     print("TTS server listening on http://0.0.0.0:8765/command (for glasses audio)")
+    mic_server = None
+    rtmp_audio = None
+    if getattr(config, "use_glasses_mic", False):
+        if camera_source_is_stream and isinstance(camera_source, str) and camera_source.lower().startswith("rtmp://"):
+            rtmp_audio = RtmpAudioIngest(camera_source).start()
+            print("Glasses mic: pulling audio from RTMP stream (wireless, same Wi‑Fi as video)")
+        else:
+            mic_server = MicIngestServer(host="0.0.0.0", port=8767).start()
+            print("Glasses mic ingest on http://0.0.0.0:8767/mic/pcm (BLE PCM fallback)")
+    elif wake_enabled:
+        print("Using Mac microphone — set USE_GLASSES_MIC=1 in .env for glasses mic")
+    phone_ok = False
+    if config.android_trail_base_url:
+        phone_ok, phone_detail = check_trail_health(config)
+        if phone_ok:
+            print(f"Phone trail server reachable at {config.android_trail_base_url}")
+        else:
+            print(f"Phone trail server not reachable yet ({phone_detail})")
+            print("On phone: Trail Return Lab -> Glasses -> Start everything (same Wi-Fi as Mac)")
+    phone_health_next_check = time.monotonic() + 15.0
     wake_queue = queue.SimpleQueue()
     stop_event = threading.Event()
     last_analysis_signature = None
@@ -787,6 +809,12 @@ def main():
             stream_misses = 0
             max_stream_misses = 600
             while True:
+                if config.android_trail_base_url and time.monotonic() >= phone_health_next_check:
+                    phone_health_next_check = time.monotonic() + 15.0
+                    now_ok, _ = check_trail_health(config)
+                    if now_ok and not phone_ok:
+                        print(f"Phone trail server now reachable at {config.android_trail_base_url}")
+                    phone_ok = now_ok
                 if not camera_only_mode and not state.is_busy:
                     while True:
                         try:
@@ -896,6 +924,10 @@ def main():
                     break
     finally:
         stop_event.set()
+        if rtmp_audio is not None:
+            rtmp_audio.stop()
+        if mic_server is not None:
+            mic_server.stop()
 
 
 if __name__ == "__main__":

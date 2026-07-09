@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 import threading
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -17,6 +18,40 @@ from .intent import Intent, classify_intent_with_source
 from .llm import answer_for, answer_general_question_with_1b, describe_current_object
 from .phrases import get_cancel_response, get_clarification_response, get_repeat_response
 from .session_state import SessionState
+
+_pending_speech: deque[str] = deque(maxlen=32)
+_pending_trail: deque[str] = deque(maxlen=16)
+_pending_lock = threading.Lock()
+
+
+def enqueue_glasses_speech(text: str) -> None:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return
+    with _pending_lock:
+        _pending_speech.append(cleaned)
+
+
+def dequeue_glasses_speech() -> str:
+    with _pending_lock:
+        if _pending_speech:
+            return _pending_speech.popleft()
+    return ""
+
+
+def enqueue_trail_command(action: str) -> None:
+    cleaned = (action or "").strip()
+    if not cleaned:
+        return
+    with _pending_lock:
+        _pending_trail.append(cleaned)
+
+
+def dequeue_trail_command() -> str:
+    with _pending_lock:
+        if _pending_trail:
+            return _pending_trail.popleft()
+    return ""
 
 IMAGE_INTENTS = {
     Intent.EXPLAIN_CURRENT_OBJECT,
@@ -183,6 +218,16 @@ class _BackendHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"ok")
             return
 
+        if parsed.path == "/pending":
+            text = dequeue_glasses_speech()
+            _json_response(self, 200, {"text": text})
+            return
+
+        if parsed.path == "/pending-trail":
+            action = dequeue_trail_command()
+            _json_response(self, 200, {"action": action})
+            return
+
         if parsed.path == "/tts":
             query = parse_qs(parsed.query)
             text = _coerce_text(query.get("text", [""])[0])
@@ -247,7 +292,13 @@ class _BackendHandler(BaseHTTPRequestHandler):
         self.wfile.write(wav)
 
     def log_message(self, format, *args):
-        print(f"backend-http: {format % args}")
+        try:
+            message = format % args
+        except Exception:
+            message = str(args)
+        if "/pending" in message:
+            return
+        print(f"backend-http: {message}")
 
 
 class TtsHttpServer:
