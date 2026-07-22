@@ -4,6 +4,7 @@ import subprocess
 import threading
 import urllib.parse
 import urllib.request
+import uuid
 
 from .audio_http import enqueue_glasses_speech
 
@@ -48,20 +49,24 @@ def last_spoken_text():
 def speak(text):
     global _last_spoken_text
     _last_spoken_text = (text or "").strip()
+    event_id = uuid.uuid4().hex[:8]
     print(f"assistant: {text}")
     _speaking.set()
     try:
         if _glasses_audio_enabled():
             if _mirror_to_android_glasses(_last_spoken_text):
+                print(f'SPEECH_OUT\ntarget=ANDROID\neventId={event_id}\ntext="{_last_spoken_text}"')
                 return
             enqueue_glasses_speech(_last_spoken_text)
             print(
                 "glasses audio: queued on Mac :8765/pending — phone picks this up while streaming "
                 "(Glasses -> Start everything)"
             )
+            print(f'SPEECH_OUT\ntarget=ANDROID_QUEUE\neventId={event_id}\ntext="{_last_spoken_text}"')
             return
         if shutil.which("say"):
             try:
+                print(f'SPEECH_OUT\ntarget=MAC_LOCAL\nreason=ANDROID_UNAVAILABLE\neventId={event_id}')
                 subprocess.run(["say", text], check=False)
                 return
             except Exception:
@@ -69,6 +74,7 @@ def speak(text):
         try:
             import pyttsx3
 
+            print(f'SPEECH_OUT\ntarget=MAC_LOCAL\nreason=ANDROID_UNAVAILABLE\neventId={event_id}')
             engine = pyttsx3.init()
             engine.say(text)
             engine.runAndWait()

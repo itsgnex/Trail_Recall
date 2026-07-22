@@ -8,14 +8,14 @@ from urllib.parse import urlparse
 
 
 def _local_rtsp_url(stream_url: str) -> str:
-    """Read audio via local RTSP so OpenCV can keep the RTMP reader for video."""
+    """Read audio from the local mediamtx RTSP stream."""
     parsed = urlparse(stream_url)
     path = parsed.path or "/live/mentra-live"
     return f"rtsp://127.0.0.1:8554{path}"
 
 
 class RtmpAudioIngest:
-    """Pull glasses mic audio from mediamtx (RTSP locally, same publisher as RTMP video)."""
+    """Pull glasses mic audio from mediamtx RTSP and append 16 kHz mono PCM."""
 
     def __init__(self, rtmp_url: str):
         self.rtmp_url = rtmp_url
@@ -24,6 +24,7 @@ class RtmpAudioIngest:
         self._thread = None
         self._stop = threading.Event()
         self._bytes = 0
+        self.started = False
 
     @property
     def total_bytes(self) -> int:
@@ -33,11 +34,12 @@ class RtmpAudioIngest:
         if self._thread and self._thread.is_alive():
             return self
         if not shutil.which("ffmpeg"):
-            print("RTMP glasses mic: ffmpeg not found — install ffmpeg on the Mac")
+            print("Glasses mic RTSP: ffmpeg not found — falling back to HTTP PCM ingest")
             return self
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        self.started = True
         print(f"Glasses mic via RTSP audio: {self.audio_url}")
         return self
 
@@ -97,12 +99,12 @@ class RtmpAudioIngest:
                 if code != 0 and not self._stop.is_set():
                     err = (self._proc.stderr.read() if self._proc.stderr else b"").decode("utf-8", errors="replace")
                     if err.strip():
-                        print(f"RTMP audio ingest: ffmpeg exited ({err.strip()[:160]})")
+                        print(f"Glasses mic RTSP: ffmpeg exited ({err.strip()[:160]})")
             except Exception as exc:
                 if not self._stop.is_set():
-                    print(f"RTMP audio ingest: {exc}")
+                    print(f"Glasses mic RTSP: {exc}")
             finally:
                 self._proc = None
             if not self._stop.is_set():
-                print("RTMP audio ingest: reconnecting in 1s...")
+                print("Glasses mic RTSP: reconnecting in 1s...")
                 time.sleep(1.0)

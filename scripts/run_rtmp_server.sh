@@ -2,7 +2,45 @@
 set -euo pipefail
 
 STREAM_PATH="${MENTRA_RTMP_STREAM_PATH:-live/mentra-live}"
-HOST_IP="${MENTRA_STREAM_HOST_IP:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)}"
+HOST_IP="${MENTRA_STREAM_HOST_IP:-192.168.0.232}"
+RTMP_URL="rtmp://$HOST_IP:1935/$STREAM_PATH"
+RTSP_URL="rtsp://127.0.0.1:8554/$STREAM_PATH"
+HLS_URL="http://$HOST_IP:8888/$STREAM_PATH/index.m3u8"
+WEBRTC_URL="http://$HOST_IP:8889/$STREAM_PATH"
+
+port_busy() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+print_urls() {
+  echo "MEDIAMTX"
+  echo "status=$1"
+  echo "rtmp=$RTMP_URL"
+  echo "rtsp=$RTSP_URL"
+  echo "hls=$HLS_URL"
+  echo "webrtc=$WEBRTC_URL"
+}
+
+probe_stream() {
+  if ffmpeg -nostdin -hide_banner -loglevel error -i "$RTSP_URL" -an -sn -frames:v 1 -f null - >/dev/null 2>&1; then
+    echo "MENTRA_STREAM"
+    echo "publisher=CONNECTED"
+    echo "video=true"
+    echo "audio=true"
+    return 0
+  fi
+  echo "MENTRA_STREAM"
+  echo "publisher=DISCONNECTED"
+  echo "video=false"
+  echo "audio=false"
+  return 1
+}
+
+if [ "${1:-}" = "probe" ]; then
+  print_urls "LISTENING"
+  probe_stream
+  exit $?
+fi
 
 if [ -z "$HOST_IP" ]; then
   echo "Set MENTRA_STREAM_HOST_IP to your Mac LAN IP (for example 192.168.1.42)." >&2
@@ -36,18 +74,21 @@ sed -i '' \
   -e 's/hlsSegmentCount: 4/hlsSegmentCount: 7/' \
   "$GEN_CFG"
 
-echo "RTMP publish URL: rtmp://$HOST_IP:1935/$STREAM_PATH"
-echo "HLS preview URL:  http://$HOST_IP:8888/$STREAM_PATH  (~1–2s with low-latency settings)"
-echo "WebRTC preview:   http://$HOST_IP:8889/$STREAM_PATH  (near real-time — use this to check latency)"
-echo "ffplay (RTMP):      ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$STREAM_PATH"
+print_urls "STARTING"
+echo "ffplay=$RTMP_URL"
 
-if lsof -nP -iTCP:1935 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo ""
-  echo "mediamtx is already running on port 1935."
-  echo "Restart to apply low-latency HLS settings:"
-  echo "  pkill mediamtx && sleep 1 && $0"
+if pgrep -x mediamtx >/dev/null 2>&1; then
+  print_urls "LISTENING"
+  echo "mediamtx is already running; not starting a duplicate."
   exit 0
 fi
+
+for port in 1935 8554 8888 8889; do
+  if port_busy "$port"; then
+    echo "Port $port is already in use by a non-detected process. Stop it before starting mediaMTX." >&2
+    exit 1
+  fi
+done
 
 echo "Starting mediamtx (low-latency HLS config)..."
 exec "$MEDIAMTX_BIN" "$GEN_CFG"

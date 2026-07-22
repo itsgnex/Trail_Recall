@@ -8,7 +8,7 @@ import time
 import cv2
 import numpy as np
 
-from src.camera import Camera, choose_camera, split_stream_urls, wait_for_publisher
+from src.camera import Camera, split_stream_urls, wait_for_publisher
 from src.config import Config
 from src.intent import Intent, classify_intent_with_source
 from src.clip_classifier import get_crop_embedding
@@ -30,15 +30,17 @@ from src.phrases import (
     get_trail_navigate_response,
     get_trail_failed_response,
 )
-from src.audio_http import TtsHttpServer
+from src.audio_http import TtsHttpServer, update_runtime_status
+from src.config import DEFAULT_MENTRA_RTSP_URL
 from src.mic_ingest import MicIngestServer, glasses_mic_buffer
+from src.network_diag import print_network_check
 from src.rtmp_audio_ingest import RtmpAudioIngest
 from src.session_state import SessionState
 from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
 from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
 from src.speech_out import is_speaking, speak
-from src.trail_phone import check_trail_health, format_trail_error, send_trail_command
+from src.trail_phone import android_bridge_diagnostics, check_trail_health, format_trail_error, send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
 from src.vision_llm import verify_same_sign
@@ -234,18 +236,19 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
 
 
 def handle_trail_intent(intent, config):
-    if intent == Intent.START_TRAIL:
-        ok, detail = send_trail_command("start", config)
-        if not ok:
-            speak(format_trail_error(detail))
-        return True
-    if intent == Intent.STOP_TRAIL:
-        ok, detail = send_trail_command("stop", config)
-        if not ok:
-            speak(format_trail_error(detail))
-        return True
-    if intent == Intent.NAVIGATE_BACK:
-        ok, detail = send_trail_command("navigate-back", config)
+    actions = {
+        Intent.START_TRAIL: "start",
+        Intent.STOP_TRAIL: "stop",
+        Intent.NAVIGATE_BACK: "navigate-back",
+        Intent.DESTINATION_REACHED: "destination-reached",
+        Intent.CHOOSE_LEFT: "choose-left",
+        Intent.CHOOSE_RIGHT: "choose-right",
+        Intent.CHOOSE_SAVED_ROUTE: "choose-saved-route",
+        Intent.CHOOSE_ALTERNATE_ROUTE: "choose-alternate-route",
+    }
+    action = actions.get(intent)
+    if action:
+        ok, detail = send_trail_command(action, config)
         if not ok:
             speak(format_trail_error(detail))
         return True
@@ -678,11 +681,14 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Phase 1 gaze-triggered plant and sign assistant.")
-    parser.add_argument("--camera", type=int, help="Open this camera index directly, for example --camera 1.")
-    parser.add_argument("--camera-source", help="Open a camera index or stream URL directly, for example --camera-source rtmp://127.0.0.1:1935/live/mentra-live or --camera-source http://127.0.0.1:8888/live/mentra-live/index.m3u8.")
+    parser.add_argument("--camera", type=int, help="Legacy local camera index. Prefer --camera-source local --camera-index N.")
+    parser.add_argument("--camera-index", type=int, help="Local camera index for --camera-source local.")
+    parser.add_argument("--camera-source", default="mentra", help="mentra, local, none, or a stream URL.")
     parser.add_argument("--mic", type=int, help="Use this microphone device index, for example --mic 0.")
     parser.add_argument("--camera-only", action="store_true", help="Open the camera window only, with no wake listener, speech, or AI flow.")
+    parser.add_argument("--preview-only", action="store_true", help="Preview the selected camera source only.")
     parser.add_argument("--test-wake", action="store_true", help="Listen for wake phrases only and print wake debug output.")
+    parser.add_argument("--network-check", action="store_true", help="Print hotspot, Android, MediaMTX, and stream diagnostics, then exit.")
     return parser.parse_args()
 
 
@@ -698,6 +704,32 @@ def normalize_camera_source(value):
         return int(text)
     except ValueError:
         return text
+
+
+def resolve_camera_source(args):
+    if args.camera is not None:
+        index = args.camera
+        print("CAMERA_SOURCE\nmode=local\nindex=" + str(index))
+        return index, "local"
+
+    source = (args.camera_source or "mentra").strip()
+    if source == "mentra":
+        print("CAMERA_SOURCE\nmode=mentra\nurl=" + DEFAULT_MENTRA_RTSP_URL)
+        return DEFAULT_MENTRA_RTSP_URL, "mentra"
+    if source == "local":
+        if args.camera_index is None:
+            raise SystemExit("Use --camera-source local --camera-index N to open a Mac camera.")
+        print("CAMERA_SOURCE\nmode=local\nindex=" + str(args.camera_index))
+        return args.camera_index, "local"
+    if source == "none":
+        print("CAMERA_SOURCE\nmode=none")
+        return None, "none"
+
+    normalized = normalize_camera_source(source)
+    mode = "local" if isinstance(normalized, int) else "stream"
+    detail = f"index={normalized}" if isinstance(normalized, int) else f"url={normalized}"
+    print(f"CAMERA_SOURCE\nmode={mode}\n{detail}")
+    return normalized, mode
 
 
 def run_wake_test(config, mic_index=None):
@@ -737,19 +769,20 @@ def _overlay_ready_banner(frame, text):
 def main():
     args = parse_args()
     config = Config.from_env(camera_index=args.camera, mic_device_index=args.mic)
+    if args.network_check:
+        print_network_check(config.android_trail_base_url)
+        return
     if args.test_wake:
         run_wake_test(config, mic_index=args.mic)
         return
-    camera_source = normalize_camera_source(
-        args.camera_source if args.camera_source is not None else (config.camera_index if args.camera is not None else choose_camera())
-    )
+    camera_source, _camera_mode = resolve_camera_source(args)
     if camera_source is None:
         return
     stream_wait_source = camera_source
     if isinstance(camera_source, str):
         stream_wait_source, camera_source = split_stream_urls(camera_source)
 
-    camera_only_mode = bool(args.camera_only)
+    camera_only_mode = bool(args.camera_only or args.preview_only)
     camera_source_is_stream = isinstance(camera_source, str) and camera_source.lower().startswith(("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://"))
     wake_enabled = not camera_only_mode and (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False))
 
@@ -757,6 +790,7 @@ def main():
     preload_thread.start()
     if wake_enabled:
         preload_thread.join(timeout=20)
+    update_runtime_status(whisper=bool(getattr(config, "use_whisper_stt", True)))
 
     trigger = DwellTrigger(config.dwell_seconds, config.cooldown_seconds)
     state = SessionState(follow_up_timeout_seconds=config.follow_up_timeout_seconds)
@@ -768,19 +802,18 @@ def main():
         if camera_source_is_stream and isinstance(camera_source, str) and camera_source.lower().startswith("rtmp://"):
             rtmp_audio = RtmpAudioIngest(camera_source).start()
             print("Glasses mic: pulling audio from RTMP stream (wireless, same Wi‑Fi as video)")
+            print(f"MIC_SOURCE\nmode=rtsp\nurl=rtsp://127.0.0.1:8554/live/mentra-live")
+            update_runtime_status(audio=True)
         else:
             mic_server = MicIngestServer(host="0.0.0.0", port=8767).start()
             print("Glasses mic ingest on http://0.0.0.0:8767/mic/pcm (BLE PCM fallback)")
+            print("MIC_SOURCE\nmode=http_pcm\nendpoint=0.0.0.0:8767/mic/pcm")
+            update_runtime_status(audio=True)
     elif wake_enabled:
         print("Using Mac microphone — set USE_GLASSES_MIC=1 in .env for glasses mic")
     phone_ok = False
-    if config.android_trail_base_url:
-        phone_ok, phone_detail = check_trail_health(config)
-        if phone_ok:
-            print(f"Phone trail server reachable at {config.android_trail_base_url}")
-        else:
-            print(f"Phone trail server not reachable yet ({phone_detail})")
-            print("On phone: Trail Return Lab -> Glasses -> Start everything (same Wi-Fi as Mac)")
+    phone_ok, _ = android_bridge_diagnostics(config)
+    update_runtime_status(androidBridge=phone_ok)
     phone_health_next_check = time.monotonic() + 15.0
     wake_queue = queue.SimpleQueue()
     stop_event = threading.Event()
@@ -815,6 +848,7 @@ def main():
                     if now_ok and not phone_ok:
                         print(f"Phone trail server now reachable at {config.android_trail_base_url}")
                     phone_ok = now_ok
+                    update_runtime_status(androidBridge=phone_ok)
                 if not camera_only_mode and not state.is_busy:
                     while True:
                         try:
@@ -840,6 +874,7 @@ def main():
                     print("Camera frame was unavailable. Check macOS camera permission and try again.")
                     return
                 stream_misses = 0
+                update_runtime_status(mentraStream=camera_source_is_stream, video=True)
 
                 if camera_only_mode:
                     if not ready_announced:

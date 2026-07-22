@@ -29,25 +29,23 @@ Press `q` in the camera window to quit.
 
 ### Full mode with mic
 
-If you want the normal assistant flow:
+If you want the normal Mentra glasses flow over the phone hotspot:
 
 ```bash
-./.venv312/bin/python main.py --camera 2 --mic 0
+./scripts/start_mentra_stack.sh
 ```
 
-Run without a camera flag to scan indexes 0 through 10, preview available cameras, and choose one:
+Or run the Python app directly in Mentra stream mode:
 
 ```bash
-./.venv312/bin/python main.py
+export ANDROID_TRAIL_URL="http://192.168.0.91:8766"
+./.venv312/bin/python main.py --camera-source mentra
 ```
 
-Or open a camera directly:
+Open a local Mac camera only when explicitly requested:
 
 ```bash
-./.venv312/bin/python main.py --camera 0
-./.venv312/bin/python main.py --camera 1
-./.venv312/bin/python main.py --camera 2
-./.venv312/bin/python main.py --camera 2 --mic 0
+./.venv312/bin/python main.py --camera-source local --camera-index 2
 ```
 
 Or point the app at a stream URL directly:
@@ -58,6 +56,14 @@ Or point the app at a stream URL directly:
 ```
 
 Use `--camera-source` when you want the Mentra stream to be used as the camera input without OBS.
+
+Diagnostics:
+
+```bash
+./.venv312/bin/python main.py --network-check
+./.venv312/bin/python main.py --camera-source mentra --preview-only
+./scripts/run_rtmp_server.sh probe
+```
 
 ## Optional AI
 
@@ -113,6 +119,7 @@ MIC_DEVICE_INDEX=0
 MIC_LISTEN_TIMEOUT=12
 MIC_PHRASE_TIME_LIMIT=7
 MIC_AMBIENT_NOISE_DURATION=1
+ANDROID_TRAIL_URL=http://192.168.0.91:8766
 ```
 
 The camera crop sent to vision is currently resized to a **384px max edge** JPEG before being encoded and sent.

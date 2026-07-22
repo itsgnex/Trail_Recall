@@ -133,9 +133,10 @@ def direct_voice_command_detected(transcript, config):
             r"can you read a sign|can you read the sign|can you read this sign|can you read it|"
             r"what does this sign mean|what does that sign mean|"
             r"what plant is this|identify this plant|tell me about this plant|"
-            r"start the trail|start trail|begin the trail|begin trail|record the trail|record trail|"
+            r"start the trail|start trail|begin the trail|begin trail|record the trail|record trail|record my route|record route|"
             r"stop the trail|stop trail|end the trail|end trail|finish the trail|"
             r"take me back|navigate back|lead me back|guide me back|bring me back|"
+            r"choose left|choose right|destination reached|i reached the destination|"
             r"help me|can you help me|look at this|tell me what this is"
             r")\b",
             text,

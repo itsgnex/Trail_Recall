@@ -21,6 +21,11 @@ class Intent(Enum):
     START_TRAIL = "START_TRAIL"
     STOP_TRAIL = "STOP_TRAIL"
     NAVIGATE_BACK = "NAVIGATE_BACK"
+    DESTINATION_REACHED = "DESTINATION_REACHED"
+    CHOOSE_LEFT = "CHOOSE_LEFT"
+    CHOOSE_RIGHT = "CHOOSE_RIGHT"
+    CHOOSE_SAVED_ROUTE = "CHOOSE_SAVED_ROUTE"
+    CHOOSE_ALTERNATE_ROUTE = "CHOOSE_ALTERNATE_ROUTE"
     GENERAL_QUESTION = "GENERAL_QUESTION"
     ASK_CLARIFICATION = "ASK_CLARIFICATION"
 
@@ -89,15 +94,25 @@ def is_general_question(text):
 
 def is_trail_command(text):
     text = f" {_normalize_trail_text(text)} "
-    if re.search(r"\b(start|begin|record)\s+(the\s+)?(trail|trails|tracking)\b", text):
+    if re.search(r"\b(start|begin|record)\s+((my|the)\s+)?(route|trail|trails|tracking)\b", text):
         return Intent.START_TRAIL
-    if re.search(r"\b(stop|end|finish)\s+(the\s+)?(trail|trails|tracking|recording)\b", text):
+    if re.search(r"\b(stop|end|finish)\s+((my|the)\s+)?(route|trail|trails|tracking|recording)\b", text):
         return Intent.STOP_TRAIL
     if re.search(
         r"\b(take me back|navigate back|lead me back|guide me back|bring me back|go back( to (the )?(start|trail))?)\b",
         text,
     ):
         return Intent.NAVIGATE_BACK
+    if re.search(r"\b(i reached the destination|destination reached|arrived|i am here|i'm here)\b", text):
+        return Intent.DESTINATION_REACHED
+    if re.search(r"\b(choose left|go left|take left|left option)\b", text):
+        return Intent.CHOOSE_LEFT
+    if re.search(r"\b(choose right|go right|take right|right option)\b", text):
+        return Intent.CHOOSE_RIGHT
+    if re.search(r"\b(choose saved route|saved route|use saved route)\b", text):
+        return Intent.CHOOSE_SAVED_ROUTE
+    if re.search(r"\b(choose alternate route|alternate route|use alternate route)\b", text):
+        return Intent.CHOOSE_ALTERNATE_ROUTE
     return None
 
 
@@ -303,6 +318,8 @@ def _demo():
     assert confirmation_action("plant") == Intent.EXPLAIN_PLANT
     assert is_trail_command("start the trail") == Intent.START_TRAIL
     assert is_trail_command("take me back") == Intent.NAVIGATE_BACK
+    assert is_trail_command("choose left") == Intent.CHOOSE_LEFT
+    assert is_trail_command("I reached the destination") == Intent.DESTINATION_REACHED
 
 
 if __name__ == "__main__":

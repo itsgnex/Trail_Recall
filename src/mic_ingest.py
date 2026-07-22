@@ -17,6 +17,8 @@ class GlassesMicBuffer:
         self._pcm = bytearray()
         self._last_at = 0.0
         self._total_bytes = 0
+        self._last_log_at = 0.0
+        self._last_log_bytes = 0
 
     def append(self, data: bytes):
         if not data:
@@ -28,6 +30,12 @@ class GlassesMicBuffer:
                 self._pcm = self._pcm[-max_bytes:]
             self._last_at = time.monotonic()
             self._total_bytes += len(data)
+            if self._last_at - self._last_log_at >= 5.0:
+                elapsed = max(0.001, self._last_at - self._last_log_at) if self._last_log_at else 5.0
+                rate = int((self._total_bytes - self._last_log_bytes) / elapsed)
+                print(f"MIC_SOURCE\nmode=http_pcm\nbytesPerSecond={rate}\ntotalBytes={self._total_bytes}")
+                self._last_log_at = self._last_at
+                self._last_log_bytes = self._total_bytes
 
     def read_seconds(self, seconds: float, timeout: float = 12.0) -> bytes | None:
         need = int(SAMPLE_RATE * SAMPLE_WIDTH * max(0.5, seconds))
@@ -107,7 +115,10 @@ class MicIngestServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8767):
         self.host = host
         self.port = port
-        self._server = _ReusableThreadingHTTPServer((host, port), _MicHandler)
+        try:
+            self._server = _ReusableThreadingHTTPServer((host, port), _MicHandler)
+        except OSError as exc:
+            raise SystemExit(f"MIC_SERVER\nstatus=FAILED\nendpoint={host}:{port}\nerror={exc}") from exc
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     @staticmethod
@@ -120,6 +131,7 @@ class MicIngestServer:
 
     def start(self):
         self._thread.start()
+        print(f"MIC_SERVER\nstatus=LISTENING\nendpoint={self.host}:{self.port}/mic/pcm")
         return self
 
     def stop(self):

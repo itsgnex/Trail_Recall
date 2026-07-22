@@ -1,8 +1,11 @@
+import array
+import fcntl
 import os
 import re
 import subprocess
 import threading
 import time
+import termios
 from pathlib import Path
 
 import cv2
@@ -12,8 +15,8 @@ import numpy as np
 STREAM_SCHEMES = ("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://")
 DEFAULT_STREAM_WIDTH = 640
 DEFAULT_STREAM_HEIGHT = 360
-MAX_STALE_FRAME_SECONDS = 4.0
-STREAM_GLITCH_HOLD_SECONDS = 0.75
+MAX_STALE_FRAME_SECONDS = 0.5
+STREAM_GLITCH_HOLD_SECONDS = 0.5
 OPENCV_STREAM_STALE_SECONDS = 1.5
 OPENCV_STREAM_ENV = "OPENCV_FFMPEG_CAPTURE_OPTIONS"
 DEFAULT_RTMP_CAPTURE_OPTIONS = "rtmp_live;live|rw_timeout;8000000"
@@ -143,6 +146,7 @@ def wait_for_publisher(source, max_wait_seconds=180, poll_seconds=3, ingest_sour
     while time.monotonic() < deadline:
         attempt += 1
         if _probe_stream_frame(source):
+            print("MENTRA_STREAM\npublisher=CONNECTED\nvideo=true\naudio=true")
             if ingest_source and ingest_source != source:
                 for hls_try in range(12):
                     if _probe_stream_frame(ingest_source, timeout_seconds=6):
@@ -242,7 +246,7 @@ class _OpenCvStreamCamera:
                 self._last_frame = frame
                 self._last_frame_at = time.monotonic()
                 self.opened = True
-                print("stream ingest: OpenCV capture live")
+                print(f"VIDEO_INGEST\nbackend=opencv\nurl={self.source}\nresolution={self.width}x{self.height}")
                 return self
             time.sleep(0.1)
         self._release_capture()
@@ -302,6 +306,7 @@ class _OpenCvStreamCamera:
 
         self._miss_count += 1
         if self._miss_count in {15, 45}:
+            print(f"MENTRA_STREAM\nfrom=DISCONNECTED\nto=RECONNECTING\nattempt={self._miss_count}")
             print("stream ingest: reopening OpenCV capture")
             self._open_capture()
         stale = self._stale_frame()
@@ -345,6 +350,7 @@ class _StreamCamera:
         self._last_frame_at = 0.0
         self._restart_count = 0
         self._next_restart_at = 0.0
+        self._reported_reconnected = False
         self._apply_source_mode(source)
 
     def _apply_source_mode(self, source):
@@ -399,11 +405,13 @@ class _StreamCamera:
             "error",
             *_ffmpeg_input_args(self.source),
             "-fflags",
-            "+genpts+discardcorrupt",
+            "+nobuffer+genpts+discardcorrupt",
             "-flags",
             "low_delay",
+            "-frame_drop_threshold",
+            "0",
             "-thread_queue_size",
-            "512",
+            "8",
             "-probesize",
             "500000",
             "-analyzeduration",
@@ -445,7 +453,11 @@ class _StreamCamera:
         self.opened = self.process.stdout is not None
         self._restart_count += 1
         if self._restart_count > 1:
+            print(f"MENTRA_STREAM\nfrom=DISCONNECTED\nto=RECONNECTING\nattempt={self._restart_count - 1}")
             print(f"stream ingest: restarted ffmpeg ({self._restart_count - 1} reconnects)")
+            self._reported_reconnected = False
+        else:
+            print(f"VIDEO_INGEST\nbackend=ffmpeg\nurl={self.source}\nresolution={self.width}x{self.height}\nfps={self.target_fps}")
 
     def _stop_process(self):
         if self.process and self.process.poll() is None:
@@ -468,6 +480,21 @@ class _StreamCamera:
             chunks.append(chunk)
             remaining -= len(chunk)
         return b"".join(chunks)
+
+    def _stdout_available_bytes(self):
+        if self.process is None or self.process.stdout is None:
+            return 0
+        available = array.array("i", [0])
+        fcntl.ioctl(self.process.stdout.fileno(), termios.FIONREAD, available, True)
+        return available[0]
+
+    def _newest_available_raw_frame(self, raw):
+        while self._stdout_available_bytes() >= self._frame_size:
+            newer = self._read_exact(self._frame_size)
+            if not newer:
+                break
+            raw = newer
+        return raw
 
     def _restart_if_needed(self):
         if self.process is not None and self.process.poll() is None:
@@ -492,16 +519,22 @@ class _StreamCamera:
 
     def read(self):
         raw = self._read_exact(self._frame_size)
+        if not raw:
+            print("MENTRA_STREAM\nfrom=CONNECTED\nto=DISCONNECTED\nreason=PUBLISHER_STOPPED")
         if not raw and not self._restart_if_needed():
             return self._stale_frame()
         if not raw:
             raw = self._read_exact(self._frame_size)
         if not raw:
             return self._stale_frame()
+        raw = self._newest_available_raw_frame(raw)
 
         frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3)).copy()
         self._last_frame = frame
         self._last_frame_at = time.monotonic()
+        if self._restart_count > 1 and not self._reported_reconnected:
+            print("MENTRA_STREAM\nfrom=RECONNECTING\nto=CONNECTED")
+            self._reported_reconnected = True
         return frame
 
     def _stale_frame(self):
@@ -548,6 +581,7 @@ class Camera:
         else:
             self._impl = _LocalCamera(self.source)
             self._impl.__enter__()
+            print(f"VIDEO_INGEST\nbackend=opencv-local\nindex={self.source}")
         self.opened = bool(getattr(self._impl, "opened", False))
         if self.opened and hasattr(self._impl, "seed_frame"):
             seed = self._impl.seed_frame()

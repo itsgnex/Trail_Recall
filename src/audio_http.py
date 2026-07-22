@@ -22,6 +22,11 @@ from .session_state import SessionState
 _pending_speech: deque[str] = deque(maxlen=32)
 _pending_trail: deque[str] = deque(maxlen=16)
 _pending_lock = threading.Lock()
+_runtime_status = {"androidBridge": False, "mentraStream": False, "video": False, "audio": False, "whisper": False}
+
+
+def update_runtime_status(**values):
+    _runtime_status.update(values)
 
 
 def enqueue_glasses_speech(text: str) -> None:
@@ -212,10 +217,7 @@ class _BackendHandler(BaseHTTPRequestHandler):
     def _handle_request(self, is_post: bool):
         parsed = urlparse(self.path)
         if parsed.path in {"/", "/health"}:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"ok")
+            _json_response(self, 200, {"ok": True, **_runtime_status})
             return
 
         if parsed.path == "/pending":
@@ -305,11 +307,15 @@ class TtsHttpServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8765):
         self.host = host
         self.port = port
-        self._server = ThreadingHTTPServer((host, port), _BackendHandler)
+        try:
+            self._server = ThreadingHTTPServer((host, port), _BackendHandler)
+        except OSError as exc:
+            raise SystemExit(f"MAC_BACKEND\nstatus=FAILED\nendpoint={host}:{port}\nerror={exc}") from exc
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def start(self):
         self._thread.start()
+        print(f"MAC_BACKEND\nstatus=LISTENING\nendpoint={self.host}:{self.port}")
         return self
 
     @property

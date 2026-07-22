@@ -5,6 +5,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+EXPECTED_MAC_IP = "192.168.0.232"
+EXPECTED_PHONE_IP = "192.168.0.91"
+MENTRA_STREAM_PATH = "live/mentra-live"
+DEFAULT_ANDROID_TRAIL_URL = f"http://{EXPECTED_PHONE_IP}:8766"
+DEFAULT_MENTRA_RTMP_URL = f"rtmp://{EXPECTED_MAC_IP}:1935/{MENTRA_STREAM_PATH}"
+DEFAULT_MENTRA_RTSP_URL = f"rtsp://127.0.0.1:8554/{MENTRA_STREAM_PATH}"
+DEFAULT_MENTRA_HLS_URL = f"http://{EXPECTED_MAC_IP}:8888/{MENTRA_STREAM_PATH}/index.m3u8"
+
 
 def env_bool(name, default):
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
