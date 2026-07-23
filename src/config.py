@@ -97,6 +97,9 @@ class Config:
     max_follow_up_turns: int = 2
     speak_follow_up_offer: bool = False
     follow_up_silence_returns_to_scan: bool = True
+    visual_prompt_cooldown_seconds: float = 30.0
+    visual_reply_max_retries: int = 1
+    visual_object_gone_seconds: float = 3.0
     voice_activation_mode: bool = True
     wake_mode: bool = True
     wake_phrases: tuple[str, ...] = (
@@ -264,6 +267,9 @@ class Config:
             max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "2")),
             speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
             follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
+            visual_prompt_cooldown_seconds=float(os.getenv("VISUAL_PROMPT_COOLDOWN_SECONDS", "30")),
+            visual_reply_max_retries=int(os.getenv("VISUAL_REPLY_MAX_RETRIES", "1")),
+            visual_object_gone_seconds=float(os.getenv("VISUAL_OBJECT_GONE_SECONDS", "3")),
             voice_activation_mode=env_bool("VOICE_ACTIVATION_MODE", True),
             wake_mode=env_bool("WAKE_MODE", True),
             wake_phrases=env_list(
@@ -273,10 +279,10 @@ class Config:
                     "okay look",
                     "hey trail",
                     "okay trail",
+                    "trail",
                     "hey glasses",
                     "hey assistant",
                     "hey nova",
-                    "can you help",
                 ),
             ),
             wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", profile_default("wake_listen_seconds", "3.0"))),

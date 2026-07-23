@@ -24,3 +24,13 @@ class SessionState:
     is_busy: bool = False
     is_processing_command: bool = False
     is_speaking: bool = False
+    visual_prompt_state: str = "IDLE"
+    visual_interaction_id: str = ""
+    visual_interaction_count: int = 0
+    visual_object_kind: str | None = None
+    visual_object_signature: object | None = None
+    visual_object_present: bool = False
+    visual_object_last_seen: float = 0.0
+    visual_object_absent_since: float = 0.0
+    visual_cooldown_until: float = 0.0
+    visual_reply_retries: int = 0
