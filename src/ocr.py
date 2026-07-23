@@ -1,10 +1,13 @@
 import cv2
+from .inference import visual_inference_allowed
 
 _warned = False
 
 
 def read_text(image):
     global _warned
+    if not visual_inference_allowed():
+        return ""
     try:
         import pytesseract
     except Exception:

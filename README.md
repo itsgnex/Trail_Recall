@@ -85,7 +85,33 @@ OPENROUTER_TIMEOUT=4
 FINAL_RESPONSE_MODEL=gemma3:1b
 IMAGE_TASK_MODEL=gemma3:1b
 USE_LOCAL_VISION_LLM=false
-STT_PROVIDER=local
+STT_PROVIDER=openrouter_first
+OPENROUTER_STT_MODEL=openai/gpt-4o-mini-transcribe
+OPENROUTER_STT_TIMEOUT_SECONDS=3
+LOCAL_STT_TIMEOUT_SECONDS=2
+REPLY_MIN_RMS=120
+REPLY_MIN_VOICED_MS=150
+WAKE_WHISPER_MODEL=tiny.en
+WAKE_WHISPER_CPU_THREADS=4
+WAKE_TRANSCRIPTION_TIMEOUT_SECONDS=2
+WAKE_CAPTURE_SECONDS=2
+WAKE_SILENCE_MS=400
+WAKE_MIN_RMS=140
+WAKE_AMBIENT_MULTIPLIER=2.5
+WAKE_MIN_VOICED_MS=250
+COMMAND_RECORD_SECONDS=2.5
+FOLLOW_UP_RECORD_SECONDS=1.5
+FOLLOW_UP_SILENCE_MS=300
+CONFIRMATION_RECORD_SECONDS=2
+CONFIRMATION_SILENCE_MS=350
+SPEECH_END_SILENCE_MS=450
+LATENCY_WARN_THRESHOLD_MS=1000
+LATENCY_LOG_FILE_ENABLED=1
+LATENCY_CONSOLE_MODE=summary
+LOG_LEVEL=INFO
+VISION_LOG_INTERVAL_SECONDS=10
+MIC_LOG_INTERVAL_SECONDS=10
+TERMINAL_COMPACT_MODE=1
 OPENAI_API_KEY=
 OPENAI_STT_MODEL=gpt-4o-mini-transcribe
 OPENAI_STT_TIMEOUT=8
@@ -107,7 +133,7 @@ WHISPER_SHORT_REPLY_MODE=true
 WHISPER_USE_VAD=false
 WHISPER_INITIAL_PROMPT=yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that
 FOLLOW_UP_MODE=true
-FOLLOW_UP_TIMEOUT_SECONDS=8
+FOLLOW_UP_RECORD_SECONDS=1.5
 MAX_FOLLOW_UP_TURNS=1
 SPEAK_FOLLOW_UP_OFFER=false
 FOLLOW_UP_SILENCE_RETURNS_TO_SCAN=true
@@ -133,6 +159,7 @@ Voice profiles:
 Speech-to-text providers:
 
 - `STT_PROVIDER=local`: use local faster-whisper
+- `STT_PROVIDER=openrouter_first`: try OpenRouter `openai/gpt-4o-mini-transcribe`, then local faster-whisper if the API fails
 - `STT_PROVIDER=openai`: skip local Whisper and use OpenAI speech-to-text
 - `STT_PROVIDER=openai_first`: try OpenAI first, then local Whisper if the API fails
 
@@ -177,7 +204,42 @@ Confidence guide:
 
 If `PLANTNET_API_KEY` is empty, plant species identification is skipped and Gemma/fallback responses clearly say the exact type is uncertain.
 
-Follow-up listening uses a configurable timeout because older-adult voice interaction research suggests response timing should be adjustable. The prototype defaults to 8 seconds and can be tested at 6, 8, or 10 seconds during evaluation.
+Follow-up listening uses a configurable timeout because older-adult voice interaction research suggests response timing should be adjustable. The prototype defaults to 1.5 seconds.
+
+## Common TTS Library
+
+Common TrailRecall phrases can be pre-generated with the same Mac `say` voice used by runtime TTS:
+
+```bash
+python scripts/generate_common_tts.py
+```
+
+Use `--force` to refresh every static WAV:
+
+```bash
+python scripts/generate_common_tts.py --force
+```
+
+Audio files are stored in:
+
+```text
+assets/common_tts/
+```
+
+The manifest is:
+
+```text
+assets/common_tts/manifest.json
+```
+
+At runtime, the Mac normalizes requested text, checks the common phrase manifest first, and returns the saved WAV immediately on a match. If there is no common phrase match, template navigation phrases are cached once per final sentence. Dynamic Mac TTS generation remains the fallback.
+
+Android can fetch cached audio with:
+
+```text
+GET /tts?eventId=...
+GET /tts?phraseId=...
+```
 
 CLIP/OpenCLIP is optional. If `open_clip` or PyTorch is missing or not compatible with your Python version, the app prints one warning and falls back to OCR plus simple image heuristics. On Python 3.13, PyTorch/OpenCLIP wheels may be limited; the prototype still starts without them.
 

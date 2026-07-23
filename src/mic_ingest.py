@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -19,23 +20,31 @@ class GlassesMicBuffer:
         self._total_bytes = 0
         self._last_log_at = 0.0
         self._last_log_bytes = 0
+        self._mode = "http_pcm"
 
-    def append(self, data: bytes):
+    def append(self, data: bytes, mode: str = "http_pcm"):
         if not data:
             return
         max_bytes = SAMPLE_RATE * SAMPLE_WIDTH * MAX_BUFFER_SECONDS
         with self._lock:
+            self._mode = mode
             self._pcm.extend(data)
             if len(self._pcm) > max_bytes:
                 self._pcm = self._pcm[-max_bytes:]
             self._last_at = time.monotonic()
             self._total_bytes += len(data)
-            if self._last_at - self._last_log_at >= 5.0:
+            interval = float(os.getenv("MIC_LOG_INTERVAL_SECONDS", "10"))
+            if self._last_at - self._last_log_at >= interval:
                 elapsed = max(0.001, self._last_at - self._last_log_at) if self._last_log_at else 5.0
                 rate = int((self._total_bytes - self._last_log_bytes) / elapsed)
-                print(f"MIC_SOURCE\nmode=http_pcm\nbytesPerSecond={rate}\ntotalBytes={self._total_bytes}")
+                if os.getenv("LOG_LEVEL", "INFO").strip().upper() in {"DEBUG", "TRACE"}:
+                    print(f"MIC_SOURCE mode={self._mode} bytesPerSecond={rate} totalBytes={self._total_bytes}")
                 self._last_log_at = self._last_at
                 self._last_log_bytes = self._total_bytes
+
+    def clear(self):
+        with self._lock:
+            self._pcm.clear()
 
     def read_seconds(self, seconds: float, timeout: float = 12.0) -> bytes | None:
         need = int(SAMPLE_RATE * SAMPLE_WIDTH * max(0.5, seconds))
@@ -54,6 +63,21 @@ class GlassesMicBuffer:
                 self._pcm.clear()
                 return chunk
         return None
+
+    def read_bytes(self, need: int, timeout: float = 12.0) -> bytes | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if len(self._pcm) >= need:
+                    chunk = bytes(self._pcm[:need])
+                    del self._pcm[:need]
+                    return chunk
+            time.sleep(0.02)
+        return None
+
+    def read_fresh_seconds(self, seconds: float, timeout: float = 12.0) -> bytes | None:
+        self.clear()
+        return self.read_seconds(seconds, timeout=timeout)
 
     def is_live(self, within_seconds: float = 2.0) -> bool:
         with self._lock:

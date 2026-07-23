@@ -1,4 +1,5 @@
 import cv2
+from .inference import local_model, visual_inference_allowed
 
 _model = None
 _preprocess = None
@@ -43,13 +44,15 @@ def _ensure_clip_model():
 
 
 def get_crop_embedding(crop):
+    if not visual_inference_allowed():
+        return None
     if not _ensure_clip_model():
         return None
     from PIL import Image
 
     rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
     image = _preprocess(Image.fromarray(rgb)).unsqueeze(0)
-    with _torch.no_grad():
+    with local_model("visual"), _torch.no_grad():
         embedding = _model.encode_image(image)
         embedding /= embedding.norm(dim=-1, keepdim=True)
     return embedding[0].detach().cpu().tolist()
@@ -57,6 +60,8 @@ def get_crop_embedding(crop):
 
 def classify_crop_with_clip(crop):
     global _model, _preprocess, _tokenizer, _torch, _warned, _disabled
+    if not visual_inference_allowed():
+        return None
     if not _ensure_clip_model():
         return None
     from PIL import Image
@@ -64,7 +69,7 @@ def classify_crop_with_clip(crop):
     rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
     image = _preprocess(Image.fromarray(rgb)).unsqueeze(0)
     text = _tokenizer([prompt for _, prompt in _prompts])
-    with _torch.no_grad():
+    with local_model("visual"), _torch.no_grad():
         image_features = _model.encode_image(image)
         text_features = _model.encode_text(text)
         image_features /= image_features.norm(dim=-1, keepdim=True)

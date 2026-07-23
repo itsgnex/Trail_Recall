@@ -4,6 +4,7 @@ import json
 
 import cv2
 
+from .inference import local_model as local_inference_model, visual_inference_allowed
 from .ollama_client import generate_json
 from .openrouter_client import generate as generate_openrouter
 
@@ -60,13 +61,16 @@ def _openrouter_json(prompt, config, images=None, label="vision"):
 def _local_json(prompt, config, images=None):
     if not getattr(config, "use_local_vision_llm", False):
         return None
+    if not visual_inference_allowed():
+        return None
     local_model = getattr(config, "image_task_model", getattr(config, "vision_llm_model", "gemma3:1b"))
     kind = "image" if images else "text"
     print(f"local vision fallback: calling {local_model} for {kind}")
     timeout = (
         getattr(config, "ollama_image_timeout", 45) if images else getattr(config, "ollama_text_timeout", 20)
     )
-    return generate_json(prompt, config, timeout=timeout, model=local_model, images=images)
+    with local_inference_model("visual"):
+        return generate_json(prompt, config, timeout=timeout, model=local_model, images=images)
 
 
 def analyze_image_with_gemma(crop, detected_kind, user_action, config, ocr_text="", clip_confidence=None):

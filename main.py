@@ -8,8 +8,10 @@ import time
 import cv2
 import numpy as np
 
+from src import app_log
 from src.camera import Camera, split_stream_urls, wait_for_publisher
 from src.config import Config
+from src.latency import log_stage, new_interaction, set_interaction
 from src.intent import Intent, classify_intent_with_source
 from src.clip_classifier import get_crop_embedding
 from src.llm import answer_for, answer_general_question_with_1b, describe_current_object, generate_more_detail_response
@@ -32,14 +34,14 @@ from src.phrases import (
 )
 from src.audio_http import TtsHttpServer, update_runtime_status
 from src.config import DEFAULT_MENTRA_RTSP_URL
-from src.mic_ingest import MicIngestServer, glasses_mic_buffer
+from src.mic_ingest import MicIngestServer
 from src.network_diag import print_network_check
 from src.rtmp_audio_ingest import RtmpAudioIngest
 from src.session_state import SessionState
 from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
-from src.speech_in import is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
-from src.speech_out import is_speaking, speak
+from src.speech_in import calibrate_wake_ambient, is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
+from src.speech_out import is_speaking, log_first_transcript_after_trail, speak
 from src.trail_phone import android_bridge_diagnostics, check_trail_health, format_trail_error, send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
@@ -211,13 +213,15 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
         heard = listen(
             config,
             typed_fallback=False,
-            record_seconds=record_seconds or getattr(config, "follow_up_timeout_seconds", 8),
+            record_seconds=record_seconds or getattr(config, "follow_up_timeout_seconds", 1.5),
             label="recording follow-up",
             after_tts=True,
+            silence_ms=getattr(config, "follow_up_silence_ms", 300),
         )
         if not heard:
             return "", None, None
 
+        log_stage("INTENT_ROUTING_START")
         intent, source = classify_intent_with_source(
             heard,
             config,
@@ -226,6 +230,7 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
             ocr_text,
             last_question_type=state.last_assistant_question_type,
         )
+        log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         print(f'follow-up said: "{heard}" -> {intent.value} via {source}')
         state.last_user_transcript = heard
         state.last_action = intent.value
@@ -249,8 +254,16 @@ def handle_trail_intent(intent, config):
     action = actions.get(intent)
     if action:
         ok, detail = send_trail_command(action, config)
-        if not ok:
-            speak(format_trail_error(detail))
+        trail_confirmations = {
+            Intent.START_TRAIL: get_trail_started_response,
+            Intent.STOP_TRAIL: get_trail_saved_response,
+            Intent.NAVIGATE_BACK: get_trail_navigate_response,
+        }
+        confirmation = trail_confirmations.get(intent)
+        if ok and confirmation:
+            speak(confirmation(), trail_command=True)
+        elif not ok:
+            speak(format_trail_error(detail), trail_command=intent in trail_confirmations)
         return True
     return False
 
@@ -269,7 +282,7 @@ def handle_voice_command(transcript, config, state, camera):
             command = listen(
                 config,
                 typed_fallback=False,
-                record_seconds=getattr(config, "command_record_seconds", 6),
+                record_seconds=getattr(config, "command_record_seconds", 2.5),
                 label="recording command",
                 after_tts=True,
             )
@@ -287,7 +300,7 @@ def handle_voice_command(transcript, config, state, camera):
             command = listen(
                 config,
                 typed_fallback=False,
-                record_seconds=getattr(config, "command_record_seconds", 6),
+                record_seconds=getattr(config, "command_record_seconds", 2.5),
                 label="recording command",
                 after_tts=True,
             )
@@ -300,11 +313,12 @@ def handle_voice_command(transcript, config, state, camera):
         if is_wake_check_command(command):
             speak(get_wake_check_response())
             return
-        print(f'command transcript: "{command}"')
+        print(f'COMMAND transcript="{command}"')
         if not command or is_incomplete_command(command):
             speak(get_wake_check_response())
             return
 
+        log_stage("INTENT_ROUTING_START")
         intent, source = classify_intent_with_source(
             command,
             config,
@@ -312,7 +326,8 @@ def handle_voice_command(transcript, config, state, camera):
             state.last_prompt or "",
             last_question_type=state.last_assistant_question_type,
         )
-        print(f'voice said: "{command}" -> {intent.value} via {source}')
+        log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
+        print(f"INTENT type={intent.value} source={source}")
         state.last_user_transcript = command
         state.last_action = intent.value
 
@@ -350,6 +365,7 @@ def handle_voice_command(transcript, config, state, camera):
                 return
             crop_kind = "sign" if intent in {Intent.READ_SIGN_TEXT, Intent.EXPLAIN_SIGN_MEANING} else "plant" if intent in {Intent.IDENTIFY_PLANT, Intent.EXPLAIN_PLANT} else state.last_detected_kind or "object"
             crop_path = save_debug_crop(crop_kind, crop)
+            log_stage("VISION_REQUEST_START", kind=crop_kind)
             if crop_kind == "sign":
                 state.last_detected_kind = "sign"
                 answer = answer_for("sign", crop, intent, config, state)
@@ -358,6 +374,7 @@ def handle_voice_command(transcript, config, state, camera):
                 answer = answer_for("plant", crop, intent, config, state)
             else:
                 answer = describe_current_object(crop, config, state)
+            log_stage("VISION_REQUEST_END", kind=crop_kind)
 
             state.last_crop_path = crop_path
             state.last_core_answer = answer
@@ -378,7 +395,7 @@ def handle_voice_command(transcript, config, state, camera):
             state,
             state.last_detected_kind,
             state.last_prompt or "",
-            record_seconds=getattr(config, "follow_up_timeout_seconds", 8),
+            record_seconds=getattr(config, "follow_up_timeout_seconds", 1.5),
         )
         if follow_up_intent is None:
             state.last_assistant_question_type = "none"
@@ -392,6 +409,7 @@ def handle_voice_command(transcript, config, state, camera):
         state.last_assistant_question_type = "none"
         intent = follow_up_intent
         source = follow_up_source
+        log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         state.last_user_transcript = heard
         state.last_action = intent.value
         if intent in {Intent.CANCEL, Intent.STOP_LISTENING}:
@@ -426,6 +444,7 @@ def handle_voice_command(transcript, config, state, camera):
                 return
             crop_kind = "sign" if intent in {Intent.READ_SIGN_TEXT, Intent.EXPLAIN_SIGN_MEANING} else "plant" if intent in {Intent.IDENTIFY_PLANT, Intent.EXPLAIN_PLANT} else state.last_detected_kind or "object"
             crop_path = save_debug_crop(crop_kind, crop)
+            log_stage("VISION_REQUEST_START", kind=crop_kind)
             if crop_kind == "sign":
                 state.last_detected_kind = "sign"
                 answer = answer_for("sign", crop, intent, config, state)
@@ -434,6 +453,7 @@ def handle_voice_command(transcript, config, state, camera):
                 answer = answer_for("plant", crop, intent, config, state)
             else:
                 answer = describe_current_object(crop, config, state)
+            log_stage("VISION_REQUEST_END", kind=crop_kind)
             state.last_crop_path = crop_path
             state.last_core_answer = answer
             state.last_final_answer = answer
@@ -454,16 +474,19 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
     if not (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False)):
         return
     while not stop_event.is_set():
-        if getattr(config, "pause_wake_during_tts", True) and (is_speaking() or getattr(state, "is_busy", False) or getattr(state, "is_processing_command", False) or getattr(state, "follow_up_enabled", False) or getattr(state, "awaiting_follow_up_reply", False)):
+        paused_for_tts = getattr(config, "pause_wake_during_tts", True) and is_speaking()
+        if paused_for_tts or (getattr(config, "pause_wake_during_tts", True) and (getattr(state, "is_busy", False) or getattr(state, "is_processing_command", False) or getattr(state, "follow_up_enabled", False) or getattr(state, "awaiting_follow_up_reply", False))):
             time.sleep(0.1)
             continue
-        transcript = listen_for_wake_phrase(mic_index=getattr(config, "mic_device_index", 0), config=config, state=state)
-        if transcript:
+        wake_result = listen_for_wake_phrase(mic_index=getattr(config, "mic_device_index", 0), config=config, state=state)
+        if wake_result:
+            transcript = wake_result.get("transcript", wake_result) if isinstance(wake_result, dict) else wake_result
             if getattr(state, "is_busy", False):
                 time.sleep(0.1)
                 continue
             print("voice activation: speech captured")
-            wake_queue.put(transcript)
+            log_first_transcript_after_trail(transcript)
+            wake_queue.put(wake_result)
             time.sleep(max(0.1, float(getattr(config, "wake_cooldown_seconds", 2))))
         else:
             time.sleep(0.05)
@@ -476,10 +499,16 @@ def handle_follow_up(crop, config, state, camera):
         return
 
     state.follow_up_enabled = True
-    state.follow_up_timeout_seconds = getattr(config, "follow_up_timeout_seconds", 8)
+    state.follow_up_timeout_seconds = getattr(config, "follow_up_timeout_seconds", 1.5)
     try:
         for _ in range(getattr(config, "max_follow_up_turns", 2)):
-            heard = listen(config, typed_fallback=False, record_seconds=state.follow_up_timeout_seconds, after_tts=True)
+            heard = listen(
+                config,
+                typed_fallback=False,
+                record_seconds=state.follow_up_timeout_seconds,
+                after_tts=True,
+                silence_ms=getattr(config, "follow_up_silence_ms", 300),
+            )
             if not heard:
                 if getattr(config, "follow_up_silence_returns_to_scan", True):
                     state.last_assistant_question_type = "none"
@@ -528,7 +557,7 @@ def handle_follow_up(crop, config, state, camera):
                     state,
                     state.last_detected_kind,
                     state.last_final_answer or "",
-                    record_seconds=getattr(config, "follow_up_timeout_seconds", 8),
+                    record_seconds=getattr(config, "follow_up_timeout_seconds", 1.5),
                 )
                 if follow_up_intent is None:
                     state.last_assistant_question_type = "none"
@@ -602,11 +631,18 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         speak(prompt)
         state.awaiting_follow_up_reply = True
         try:
-            heard = listen(config, after_tts=True)
+            heard = listen(
+                config,
+                record_seconds=getattr(config, "confirmation_record_seconds", 2),
+                after_tts=True,
+                silence_ms=getattr(config, "confirmation_silence_ms", 350),
+            )
         finally:
             state.awaiting_follow_up_reply = False
         ocr_text = read_text(crop) if kind == "sign" else ""
+        log_stage("INTENT_ROUTING_START")
         intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
+        log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
         state.last_user_transcript = heard
         state.last_action = intent.value
@@ -614,8 +650,15 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         if intent == Intent.REPEAT_LAST_MESSAGE:
             speak(get_repeat_response())
             speak(prompt)
-            heard = listen(config, after_tts=True)
+            heard = listen(
+                config,
+                record_seconds=getattr(config, "confirmation_record_seconds", 2),
+                after_tts=True,
+                silence_ms=getattr(config, "confirmation_silence_ms", 350),
+            )
+            log_stage("INTENT_ROUTING_START")
             intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
+            log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
             print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
             state.last_user_transcript = heard
             state.last_action = intent.value
@@ -634,7 +677,7 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
                 state,
                 kind,
                 ocr_text,
-                record_seconds=getattr(config, "follow_up_timeout_seconds", 8),
+                record_seconds=getattr(config, "follow_up_timeout_seconds", 1.5),
             )
             if follow_up_intent is None:
                 state.last_assistant_question_type = "none"
@@ -652,9 +695,13 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
             return
 
         if intent in {Intent.WHAT_AM_I_LOOKING_AT, Intent.DESCRIBE_CURRENT_OBJECT, Intent.IDENTIFY_CURRENT_OBJECT}:
+            log_stage("VISION_REQUEST_START", kind=kind)
             answer = describe_current_object(crop, config, state)
+            log_stage("VISION_REQUEST_END", kind=kind)
         else:
+            log_stage("VISION_REQUEST_START", kind=kind)
             answer = answer_for(kind, crop, intent, config, state)
+            log_stage("VISION_REQUEST_END", kind=kind)
         state.last_core_answer = answer
         state.last_final_answer = answer
         state.last_answer_time = time.monotonic()
@@ -709,26 +756,26 @@ def normalize_camera_source(value):
 def resolve_camera_source(args):
     if args.camera is not None:
         index = args.camera
-        print("CAMERA_SOURCE\nmode=local\nindex=" + str(index))
+        app_log.debug("CAMERA_SOURCE\nmode=local\nindex=" + str(index))
         return index, "local"
 
     source = (args.camera_source or "mentra").strip()
     if source == "mentra":
-        print("CAMERA_SOURCE\nmode=mentra\nurl=" + DEFAULT_MENTRA_RTSP_URL)
+        app_log.debug("CAMERA_SOURCE\nmode=mentra\nurl=" + DEFAULT_MENTRA_RTSP_URL)
         return DEFAULT_MENTRA_RTSP_URL, "mentra"
     if source == "local":
         if args.camera_index is None:
             raise SystemExit("Use --camera-source local --camera-index N to open a Mac camera.")
-        print("CAMERA_SOURCE\nmode=local\nindex=" + str(args.camera_index))
+        app_log.debug("CAMERA_SOURCE\nmode=local\nindex=" + str(args.camera_index))
         return args.camera_index, "local"
     if source == "none":
-        print("CAMERA_SOURCE\nmode=none")
+        app_log.debug("CAMERA_SOURCE\nmode=none")
         return None, "none"
 
     normalized = normalize_camera_source(source)
     mode = "local" if isinstance(normalized, int) else "stream"
     detail = f"index={normalized}" if isinstance(normalized, int) else f"url={normalized}"
-    print(f"CAMERA_SOURCE\nmode={mode}\n{detail}")
+    app_log.debug(f"CAMERA_SOURCE\nmode={mode}\n{detail}")
     return normalized, mode
 
 
@@ -748,6 +795,8 @@ def run_wake_test(config, mic_index=None):
         )
         if not transcript:
             continue
+        if isinstance(transcript, dict):
+            transcript = transcript.get("transcript", "")
         cleaned = strip_wake_phrase(
             transcript,
             getattr(test_config, "wake_phrases", ()),
@@ -767,8 +816,17 @@ def _overlay_ready_banner(frame, text):
 
 
 def main():
+    new_interaction("startup")
+    log_stage("APP_START")
     args = parse_args()
     config = Config.from_env(camera_index=args.camera, mic_device_index=args.mic)
+    import os
+
+    os.environ.setdefault("LATENCY_WARN_THRESHOLD_MS", str(getattr(config, "latency_warn_threshold_ms", 1000)))
+    os.environ.setdefault("LATENCY_LOG_FILE_ENABLED", "1" if getattr(config, "latency_log_file_enabled", False) else "0")
+    os.environ.setdefault("LOG_LEVEL", getattr(config, "log_level", "INFO"))
+    os.environ.setdefault("LATENCY_CONSOLE_MODE", getattr(config, "latency_console_mode", "summary"))
+    os.environ.setdefault("TERMINAL_COMPACT_MODE", "1" if getattr(config, "terminal_compact_mode", False) else "0")
     if args.network_check:
         print_network_check(config.android_trail_base_url)
         return
@@ -795,32 +853,41 @@ def main():
     trigger = DwellTrigger(config.dwell_seconds, config.cooldown_seconds)
     state = SessionState(follow_up_timeout_seconds=config.follow_up_timeout_seconds)
     tts_server = TtsHttpServer(host="0.0.0.0", port=8765).start()
-    print("TTS server listening on http://0.0.0.0:8765/command (for glasses audio)")
+    app_log.debug("TTS server listening on http://0.0.0.0:8765/command (for glasses audio)")
     mic_server = None
     rtmp_audio = None
     if getattr(config, "use_glasses_mic", False):
-        if camera_source_is_stream and isinstance(camera_source, str) and camera_source.lower().startswith("rtmp://"):
+        if camera_source_is_stream and isinstance(camera_source, str) and camera_source.lower().startswith(("rtsp://", "rtmp://")):
             rtmp_audio = RtmpAudioIngest(camera_source).start()
-            print("Glasses mic: pulling audio from RTMP stream (wireless, same Wi‑Fi as video)")
-            print(f"MIC_SOURCE\nmode=rtsp\nurl=rtsp://127.0.0.1:8554/live/mentra-live")
-            update_runtime_status(audio=True)
-        else:
+            if rtmp_audio.started:
+                print("Glasses mic: pulling audio from RTSP stream")
+                app_log.debug(f"MIC_SOURCE\nmode=rtsp\nurl={rtmp_audio.audio_url}")
+                log_stage("RTSP_AUDIO_CONNECTED", url=rtmp_audio.audio_url)
+                update_runtime_status(audio=True)
+        if rtmp_audio is None or not rtmp_audio.started:
             mic_server = MicIngestServer(host="0.0.0.0", port=8767).start()
             print("Glasses mic ingest on http://0.0.0.0:8767/mic/pcm (BLE PCM fallback)")
-            print("MIC_SOURCE\nmode=http_pcm\nendpoint=0.0.0.0:8767/mic/pcm")
+            app_log.debug("MIC_SOURCE\nmode=http_pcm\nendpoint=0.0.0.0:8767/mic/pcm")
             update_runtime_status(audio=True)
     elif wake_enabled:
         print("Using Mac microphone — set USE_GLASSES_MIC=1 in .env for glasses mic")
+    if wake_enabled and getattr(config, "use_glasses_mic", False):
+        calibrate_wake_ambient(config)
     phone_ok = False
     phone_ok, _ = android_bridge_diagnostics(config)
     update_runtime_status(androidBridge=phone_ok)
+    if phone_ok:
+        log_stage("ANDROID_BRIDGE_CONNECTED")
     phone_health_next_check = time.monotonic() + 15.0
     wake_queue = queue.SimpleQueue()
     stop_event = threading.Event()
     last_analysis_signature = None
+    last_crop_log_at = 0.0
+    last_crop_log_kind = ""
     wake_thread = None
     if wake_enabled:
         wake_thread = threading.Thread(target=wake_listener_loop, args=(config, state, wake_queue, stop_event), daemon=True)
+        wake_thread.name = "WakeListener"
         wake_thread.start()
 
     try:
@@ -829,6 +896,8 @@ def main():
             ingest_source=camera_source if camera_source != stream_wait_source else None,
         ):
             return
+        if camera_source_is_stream:
+            log_stage("VIDEO_STREAM_READY")
 
         with Camera(
             camera_source,
@@ -852,9 +921,19 @@ def main():
                 if not camera_only_mode and not state.is_busy:
                     while True:
                         try:
-                            transcript = wake_queue.get_nowait()
+                            wake_result = wake_queue.get_nowait()
                         except queue.Empty:
                             break
+                        if isinstance(wake_result, dict):
+                            transcript = wake_result.get("transcript", "")
+                            set_interaction(
+                                wake_result.get("interactionId") or new_interaction(),
+                                started_at=wake_result.get("startedAt"),
+                                stages=wake_result.get("stages"),
+                            )
+                        else:
+                            transcript = wake_result
+                            new_interaction()
                         handle_voice_command(transcript, config, state, camera)
 
                 frame = camera.read()
@@ -879,6 +958,7 @@ def main():
                 if camera_only_mode:
                     if not ready_announced:
                         print("READY: camera-only preview is live. Press q to quit.")
+                        log_stage("SYSTEM_READY")
                         ready_announced = True
                     _overlay_ready_banner(frame, "READY - camera-only demo")
                     if camera.show(frame):
@@ -892,13 +972,19 @@ def main():
                     if wake_enabled:
                         ready_parts.append("wake listener active")
                     ready_parts.append("analysis running")
-                    print("READY: " + ", ".join(ready_parts) + ".")
+                    mic_mode = "rtsp" if rtmp_audio and rtmp_audio.started else "http_pcm" if mic_server else "mac"
+                    print(f"SYSTEM ready camera={_camera_mode} mic={mic_mode} android={'connected' if phone_ok else 'unavailable'}")
+                    log_stage("SYSTEM_READY")
                     ready_announced = True
                 if not state.is_busy and trigger.ready_to_analyze(config.analysis_interval):
                     if crop_changed_enough(signature, last_analysis_signature):
                         last_analysis_signature = signature
                         result = analyze_crop(crop, config)
-                        print(f"center crop: {result.kind} ({result.reason})")
+                        now = time.monotonic()
+                        if result.kind in {"plant", "sign"} or result.kind != last_crop_log_kind or now - last_crop_log_at >= getattr(config, "vision_log_interval_seconds", 10):
+                            app_log.debug(f"center crop: {result.kind} ({result.reason})")
+                            last_crop_log_at = now
+                            last_crop_log_kind = result.kind
                         if trigger.update(result.kind):
                             crop_path = save_debug_crop(result.kind, crop)
                             remembered = None

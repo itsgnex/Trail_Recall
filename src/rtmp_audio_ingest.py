@@ -65,9 +65,11 @@ class RtmpAudioIngest:
             "-rtsp_transport",
             "tcp",
             "-fflags",
-            "nobuffer",
+            "+nobuffer+genpts+igndts",
             "-flags",
             "low_delay",
+            "-use_wallclock_as_timestamps",
+            "1",
             "-i",
             self.audio_url,
             "-vn",
@@ -75,6 +77,8 @@ class RtmpAudioIngest:
             "1",
             "-ar",
             "16000",
+            "-af",
+            "aresample=async=1:first_pts=0,asetpts=N/SR/TB",
             "-acodec",
             "pcm_s16le",
             "-f",
@@ -93,7 +97,7 @@ class RtmpAudioIngest:
                     chunk = self._proc.stdout.read(4096)
                     if not chunk:
                         break
-                    glasses_mic_buffer().append(chunk)
+                    glasses_mic_buffer().append(chunk, mode="rtsp")
                     self._bytes += len(chunk)
                 code = self._proc.wait(timeout=5)
                 if code != 0 and not self._stop.is_set():

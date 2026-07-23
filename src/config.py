@@ -69,17 +69,31 @@ class Config:
     mic_phrase_start_pause: float = 0.2
     use_whisper_stt: bool = True
     whisper_model: str = "small.en"
+    wake_whisper_model: str = "tiny.en"
+    wake_whisper_cpu_threads: int = 4
+    wake_transcription_timeout_seconds: float = 2.0
+    wake_min_rms: int = 140
+    wake_ambient_multiplier: float = 2.5
+    wake_min_voiced_ms: int = 250
     whisper_record_seconds: int = 5
     whisper_short_reply_mode: bool = True
     whisper_use_vad: bool = False
     whisper_initial_prompt: str = "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that"
-    stt_provider: str = "local"
+    stt_provider: str = "openrouter_first"
     openai_api_key: str = ""
     openai_stt_model: str = "gpt-4o-mini-transcribe"
     openai_stt_url: str = "https://api.openai.com/v1/audio/transcriptions"
     openai_stt_timeout: int = 8
+    openrouter_stt_model: str = "openai/gpt-4o-mini-transcribe"
+    openrouter_stt_timeout_seconds: float = 3.0
+    local_stt_timeout_seconds: float = 2.0
+    reply_min_rms: int = 120
+    reply_min_voiced_ms: int = 150
     follow_up_mode: bool = True
-    follow_up_timeout_seconds: int = 8
+    follow_up_timeout_seconds: float = 1.5
+    follow_up_silence_ms: int = 300
+    confirmation_record_seconds: float = 2.0
+    confirmation_silence_ms: int = 350
     max_follow_up_turns: int = 2
     speak_follow_up_offer: bool = False
     follow_up_silence_returns_to_scan: bool = True
@@ -90,13 +104,16 @@ class Config:
         "okay look",
         "hey trail",
         "okay trail",
+        "trail",
         "hey glasses",
         "hey assistant",
         "hey nova",
-        "can you help",
     )
     wake_listen_seconds: float = 3.0
-    command_record_seconds: int = 6
+    wake_capture_seconds: float = 2.0
+    wake_silence_ms: int = 400
+    command_record_seconds: float = 2.5
+    speech_end_silence_ms: int = 450
     wake_cooldown_seconds: int = 2
     pause_wake_during_tts: bool = True
     allow_single_word_wake: bool = False
@@ -119,6 +136,13 @@ class Config:
     scene_memory_max_items: int = 120
     android_trail_base_url: str = ""
     use_glasses_mic: bool = False
+    latency_warn_threshold_ms: int = 1000
+    latency_log_file_enabled: bool = False
+    log_level: str = "INFO"
+    latency_console_mode: str = "summary"
+    vision_log_interval_seconds: float = 10.0
+    mic_log_interval_seconds: float = 10.0
+    terminal_compact_mode: bool = False
 
     @classmethod
     def from_env(cls, camera_index=None, mic_device_index=None):
@@ -130,7 +154,7 @@ class Config:
                 "whisper_short_reply_mode": "false",
                 "whisper_use_vad": "false",
                 "wake_listen_seconds": "3.5",
-                "command_record_seconds": "5",
+                "command_record_seconds": "3",
                 "wake_cooldown_seconds": "1",
                 "mic_listen_timeout": "8",
                 "mic_ambient_noise_duration": "0.75",
@@ -142,7 +166,7 @@ class Config:
                 "whisper_short_reply_mode": "false",
                 "whisper_use_vad": "false",
                 "wake_listen_seconds": "2.0",
-                "command_record_seconds": "5",
+                "command_record_seconds": "3",
                 "wake_cooldown_seconds": "2",
                 "mic_listen_timeout": "10",
                 "mic_ambient_noise_duration": "1.0",
@@ -154,7 +178,7 @@ class Config:
                 "whisper_short_reply_mode": "false",
                 "whisper_use_vad": "true",
                 "wake_listen_seconds": "3.5",
-                "command_record_seconds": "6",
+                "command_record_seconds": "3",
                 "wake_cooldown_seconds": "1",
                 "mic_listen_timeout": "14",
                 "mic_ambient_noise_duration": "1.0",
@@ -167,6 +191,9 @@ class Config:
         plantnet_api_key = os.getenv("PLANTNET_API_KEY", "")
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
         openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        stt_provider = os.getenv("STT_PROVIDER", "openrouter_first").strip().lower()
+        if stt_provider == "openai" and not openai_api_key and openrouter_api_key:
+            stt_provider = "openrouter_first"
         return cls(
             camera_index=camera_index if camera_index is not None else int(os.getenv("CAMERA_INDEX", "0")),
             use_clip=env_bool("USE_CLIP", True),
@@ -206,6 +233,12 @@ class Config:
             mic_phrase_start_pause=float(os.getenv("MIC_PHRASE_START_PAUSE", "0.2")),
             use_whisper_stt=env_bool("USE_WHISPER_STT", True),
             whisper_model=os.getenv("WHISPER_MODEL", profile_default("whisper_model", "small.en")),
+            wake_whisper_model=os.getenv("WAKE_WHISPER_MODEL", "tiny.en"),
+            wake_whisper_cpu_threads=int(os.getenv("WAKE_WHISPER_CPU_THREADS", "4")),
+            wake_transcription_timeout_seconds=float(os.getenv("WAKE_TRANSCRIPTION_TIMEOUT_SECONDS", "2")),
+            wake_min_rms=int(os.getenv("WAKE_MIN_RMS", "140")),
+            wake_ambient_multiplier=float(os.getenv("WAKE_AMBIENT_MULTIPLIER", "2.5")),
+            wake_min_voiced_ms=int(os.getenv("WAKE_MIN_VOICED_MS", "250")),
             whisper_record_seconds=int(os.getenv("WHISPER_RECORD_SECONDS", profile_default("whisper_record_seconds", "5"))),
             whisper_short_reply_mode=env_bool("WHISPER_SHORT_REPLY_MODE", profile_default("whisper_short_reply_mode", "true")),
             whisper_use_vad=env_bool("WHISPER_USE_VAD", profile_default("whisper_use_vad", "false")),
@@ -213,13 +246,21 @@ class Config:
                 "WHISPER_INITIAL_PROMPT",
                 "yes, no, sure, why not, please do, don't, not now, can you do it, tell me more, repeat that",
             ),
-            stt_provider=os.getenv("STT_PROVIDER", "local").strip().lower(),
+            stt_provider=stt_provider,
             openai_api_key=openai_api_key,
             openai_stt_model=os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe"),
             openai_stt_url=os.getenv("OPENAI_STT_URL", "https://api.openai.com/v1/audio/transcriptions"),
             openai_stt_timeout=int(os.getenv("OPENAI_STT_TIMEOUT", "8")),
+            openrouter_stt_model=os.getenv("OPENROUTER_STT_MODEL", "openai/gpt-4o-mini-transcribe"),
+            openrouter_stt_timeout_seconds=float(os.getenv("OPENROUTER_STT_TIMEOUT_SECONDS", "3")),
+            local_stt_timeout_seconds=float(os.getenv("LOCAL_STT_TIMEOUT_SECONDS", "2")),
+            reply_min_rms=int(os.getenv("REPLY_MIN_RMS", "120")),
+            reply_min_voiced_ms=int(os.getenv("REPLY_MIN_VOICED_MS", "150")),
             follow_up_mode=env_bool("FOLLOW_UP_MODE", True),
-            follow_up_timeout_seconds=int(os.getenv("FOLLOW_UP_TIMEOUT_SECONDS", "8")),
+            follow_up_timeout_seconds=float(os.getenv("FOLLOW_UP_RECORD_SECONDS", os.getenv("FOLLOW_UP_TIMEOUT_SECONDS", "1.5"))),
+            follow_up_silence_ms=int(os.getenv("FOLLOW_UP_SILENCE_MS", "300")),
+            confirmation_record_seconds=float(os.getenv("CONFIRMATION_RECORD_SECONDS", "2")),
+            confirmation_silence_ms=int(os.getenv("CONFIRMATION_SILENCE_MS", "350")),
             max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "2")),
             speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
             follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
@@ -239,7 +280,10 @@ class Config:
                 ),
             ),
             wake_listen_seconds=float(os.getenv("WAKE_LISTEN_SECONDS", profile_default("wake_listen_seconds", "3.0"))),
-            command_record_seconds=int(os.getenv("COMMAND_RECORD_SECONDS", profile_default("command_record_seconds", "6"))),
+            wake_capture_seconds=float(os.getenv("WAKE_CAPTURE_SECONDS", "2.0")),
+            wake_silence_ms=int(os.getenv("WAKE_SILENCE_MS", "400")),
+            command_record_seconds=float(os.getenv("COMMAND_RECORD_SECONDS", profile_default("command_record_seconds", "2.5"))),
+            speech_end_silence_ms=int(os.getenv("SPEECH_END_SILENCE_MS", "450")),
             wake_cooldown_seconds=int(os.getenv("WAKE_COOLDOWN_SECONDS", profile_default("wake_cooldown_seconds", "2"))),
             pause_wake_during_tts=env_bool("PAUSE_WAKE_DURING_TTS", True),
             allow_single_word_wake=env_bool("ALLOW_SINGLE_WORD_WAKE", False),
@@ -262,4 +306,11 @@ class Config:
             scene_memory_max_items=int(os.getenv("SCENE_MEMORY_MAX_ITEMS", "120")),
             android_trail_base_url=os.getenv("ANDROID_TRAIL_URL", "").strip(),
             use_glasses_mic=env_bool("USE_GLASSES_MIC", True),
+            latency_warn_threshold_ms=int(os.getenv("LATENCY_WARN_THRESHOLD_MS", "1000")),
+            latency_log_file_enabled=env_bool("LATENCY_LOG_FILE_ENABLED", False),
+            log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
+            latency_console_mode=os.getenv("LATENCY_CONSOLE_MODE", "summary").strip().lower(),
+            vision_log_interval_seconds=float(os.getenv("VISION_LOG_INTERVAL_SECONDS", "10")),
+            mic_log_interval_seconds=float(os.getenv("MIC_LOG_INTERVAL_SECONDS", "10")),
+            terminal_compact_mode=env_bool("TERMINAL_COMPACT_MODE", False),
         )

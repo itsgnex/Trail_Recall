@@ -20,7 +20,7 @@ class SessionState:
     last_assistant_question_type: str = "none"
     follow_up_enabled: bool = False
     awaiting_follow_up_reply: bool = False
-    follow_up_timeout_seconds: int = 8
+    follow_up_timeout_seconds: float = 1.5
     is_busy: bool = False
     is_processing_command: bool = False
     is_speaking: bool = False

@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "sampleRate": 16000,
+  "channels": 1,
+  "phrases": [
+    {
+      "phraseId": "general_yes_hear_you",
+      "category": "GENERAL",
+      "text": "Yes, I can hear you.",
+      "normalizedText": "yes i can hear you",
+      "wav": "general_yes_hear_you.wav",
+      "wavFilename": "general_yes_hear_you.wav"
+    },
+    {
+      "phraseId": "general_yes_short",
+      "category": "GENERAL",
+      "text": "Yes?",
+      "normalizedText": "yes",
+      "wav": "general_yes_short.wav",
+      "wavFilename": "general_yes_short.wav"
+    },
+    {
+      "phraseId": "general_can_hear_tell_look",
+      "category": "GENERAL",
+      "text": "I can hear you. Please tell me what you want me to look at.",
+      "normalizedText": "i can hear you please tell me what you want me to look at",
+      "wav": "general_can_hear_tell_look.wav",
+      "wavFilename": "general_can_hear_tell_look.wav"
+    },
+    {
+      "phraseId": "general_what_look_at",
+      "category": "GENERAL",
+      "text": "What would you like me to look at?",
+      "normalizedText": "what would you like me to look at",
+      "wav": "general_what_look_at.wav",
+      "wavFilename": "general_what_look_at.wav"
+    },
+    {
+      "phraseId": "general_say_again",
+      "category": "GENERAL",
+      "text": "Please say that again.",
+      "normalizedText": "please say that again",
+      "wav": "general_say_again.wav",
+      "wavFilename": "general_say_again.wav"
+    },
+    {
+      "phraseId": "general_full_question_again",
+      "category": "GENERAL",
+      "text": "I did not catch the full question. Please say it again.",
+      "normalizedText": "i did not catch the full question please say it again",
+      "wav": "general_full_question_again.wav",
+      "wavFilename": "general_full_question_again.wav"
+    },
+    {
+      "phraseId": "general_missed_continue",
+      "category": "GENERAL",
+      "text": "I may have missed that. Would you like me to continue?",
+      "normalizedText": "i may have missed that would you like me to continue",
+      "wav": "general_missed_continue.wav",
+      "wavFilename": "general_missed_continue.wav"
+    },
+    {
+      "phraseId": "general_unsure_continue_explain",
+      "category": "GENERAL",
+      "text": "I’m not sure if you wanted me to continue. Should I explain it?",
+      "normalizedText": "i'm not sure if you wanted me to continue should i explain it",
+      "wav": "general_unsure_continue_explain.wav",
+      "wavFilename": "general_unsure_continue_explain.wav"
+    },
+    {
+      "phraseId": "general_okay",
+      "category": "GENERAL",
+      "text": "Okay.",
+      "normalizedText": "okay",
+      "wav": "general_okay.wav",
+      "wavFilename": "general_okay.wav"
+    },
+    {
+      "phraseId": "general_no_problem",
+      "category": "GENERAL",
+      "text": "No problem.",
+      "normalizedText": "no problem",
+      "wav": "general_no_problem.wav",
+      "wavFilename": "general_no_problem.wav"
+    },
+    {
+      "phraseId": "general_wait_moment",
+      "category": "GENERAL",
+      "text": "Please wait a moment.",
+      "normalizedText": "please wait a moment",
+      "wav": "general_wait_moment.wav",
+      "wavFilename": "general_wait_moment.wav"
+    },
+    {
+      "phraseId": "general_ready",
+      "category": "GENERAL",
+      "text": "I’m ready.",
+      "normalizedText": "i'm ready",
+      "wav": "general_ready.wav",
+      "wavFilename": "general_ready.wav"
+    },
+    {
+      "phraseId": "general_listening",
+      "category": "GENERAL",
+      "text": "I’m listening.",
+      "normalizedText": "i'm listening",
+      "wav": "general_listening.wav",
+      "wavFilename": "general_listening.wav"
+    },
+    {
+      "phraseId": "general_yes_listening_check",
+      "category": "GENERAL",
+      "text": "Yes, I’m listening. What would you like me to check?",
+      "normalizedText": "yes i'm listening what would you like me to check",
+      "wav": "general_yes_listening_check.wav",
+      "wavFilename": "general_yes_listening_check.wav"
+    },
+    {
+      "phraseId": "general_tell_me_check",
+      "category": "GENERAL",
+      "text": "Please tell me what you want me to check.",
+      "normalizedText": "please tell me what you want me to check",
+      "wav": "general_tell_me_check.wav",
+      "wavFilename": "general_tell_me_check.wav"
+    },
+    {
+      "phraseId": "general_unsure_help_this",
+      "category": "GENERAL",
+      "text": "I’m sorry, I wasn’t sure what you wanted. Would you like me to help with this?",
+      "normalizedText": "i'm sorry i wasn't sure what you wanted would you like me to help with this",
+      "wav": "general_unsure_help_this.wav",
+      "wavFilename": "general_unsure_help_this.wav"
+    },
+    {
+      "phraseId": "general_didnt_catch_watch_quietly",
+      "category": "GENERAL",
+      "text": "I didn’t catch that. I’ll go back to watching quietly.",
+      "normalizedText": "i didn't catch that i'll go back to watching quietly",
+      "wav": "general_didnt_catch_watch_quietly.wav",
+      "wavFilename": "general_didnt_catch_watch_quietly.wav"
+    },
+    {
+      "phraseId": "general_center_not_clear_move_closer",
+      "category": "GENERAL",
+      "text": "I can see something in the center, but it is not clear enough yet. Try holding it steadier or moving a little closer.",
+      "normalizedText": "i can see something in the center but it is not clear enough yet try holding it steadier or moving a little closer",
+      "wav": "general_center_not_clear_move_closer.wav",
+      "wavFilename": "general_center_not_clear_move_closer.wav"
+    },
+    {
+      "phraseId": "sign_may_see_help",
+      "category": "SIGNS",
+      "text": "I may be seeing a sign here. Would you like help with it?",
+      "normalizedText": "i may be seeing a sign here would you like help with it",
+      "wav": "sign_may_see_help.wav",
+      "wavFilename": "sign_may_see_help.wav"
+    },
+    {
+      "phraseId": "sign_should_explain_saying",
+      "category": "SIGNS",
+      "text": "Should I explain what this sign is saying?",
+      "normalizedText": "should i explain what this sign is saying",
+      "wav": "sign_should_explain_saying.wav",
+      "wavFilename": "sign_should_explain_saying.wav"
+    },
+    {
+      "phraseId": "sign_try_tell_means",
+      "category": "SIGNS",
+      "text": "I can try to tell you what this sign means.",
+      "normalizedText": "i can try to tell you what this sign means",
+      "wav": "sign_try_tell_means.wav",
+      "wavFilename": "sign_try_tell_means.wav"
+    },
+    {
+      "phraseId": "sign_cannot_read_clearly",
+      "category": "SIGNS",
+      "text": "I’m not able to read this sign clearly from here.",
+      "normalizedText": "i'm not able to read this sign clearly from here",
+      "wav": "sign_cannot_read_clearly.wav",
+      "wavFilename": "sign_cannot_read_clearly.wav"
+    },
+    {
+      "phraseId": "sign_move_closer",
+      "category": "SIGNS",
+      "text": "Please move a little closer to the sign.",
+      "normalizedText": "please move a little closer to the sign",
+      "wav": "sign_move_closer.wav",
+      "wavFilename": "sign_move_closer.wav"
+    },
+    {
+      "phraseId": "sign_keep_centered",
+      "category": "SIGNS",
+      "text": "Please keep the sign centered in front of you.",
+      "normalizedText": "please keep the sign centered in front of you",
+      "wav": "sign_keep_centered.wav",
+      "wavFilename": "sign_keep_centered.wav"
+    },
+    {
+      "phraseId": "sign_stop",
+      "category": "SIGNS",
+      "text": "This appears to be a stop sign.",
+      "normalizedText": "this appears to be a stop sign",
+      "wav": "sign_stop.wav",
+      "wavFilename": "sign_stop.wav"
+    },
+    {
+      "phraseId": "sign_warning",
+      "category": "SIGNS",
+      "text": "This appears to be a warning sign.",
+      "normalizedText": "this appears to be a warning sign",
+      "wav": "sign_warning.wav",
+      "wavFilename": "sign_warning.wav"
+    },
+    {
+      "phraseId": "sign_information",
+      "category": "SIGNS",
+      "text": "This appears to be an information sign.",
+      "normalizedText": "this appears to be an information sign",
+      "wav": "sign_information.wav",
+      "wavFilename": "sign_information.wav"
+    },
+    {
+      "phraseId": "sign_not_confident",
+      "category": "SIGNS",
+      "text": "I cannot identify this sign confidently.",
+      "normalizedText": "i cannot identify this sign confidently",
+      "wav": "sign_not_confident.wav",
+      "wavFilename": "sign_not_confident.wav"
+    },
+    {
+      "phraseId": "plant_may_see_identify",
+      "category": "PLANTS",
+      "text": "I may be seeing a plant. Would you like me to identify it?",
+      "normalizedText": "i may be seeing a plant would you like me to identify it",
+      "wav": "plant_may_see_identify.wav",
+      "wavFilename": "plant_may_see_identify.wav"
+    },
+    {
+      "phraseId": "plant_move_closer",
+      "category": "PLANTS",
+      "text": "Please move a little closer to the plant.",
+      "normalizedText": "please move a little closer to the plant",
+      "wav": "plant_move_closer.wav",
+      "wavFilename": "plant_move_closer.wav"
+    },
+    {
+      "phraseId": "plant_keep_centered",
+      "category": "PLANTS",
+      "text": "Please keep the plant centered in front of you.",
+      "normalizedText": "please keep the plant centered in front of you",
+      "wav": "plant_keep_centered.wav",
+      "wavFilename": "plant_keep_centered.wav"
+    },
+    {
+      "phraseId": "plant_checking",
+      "category": "PLANTS",
+      "text": "I’m checking the plant.",
+      "normalizedText": "i'm checking the plant",
+      "wav": "plant_checking.wav",
+      "wavFilename": "plant_checking.wav"
+    },
+    {
+      "phraseId": "plant_not_confident",
+      "category": "PLANTS",
+      "text": "I could not identify this plant confidently.",
+      "normalizedText": "i could not identify this plant confidently",
+      "wav": "plant_not_confident.wav",
+      "wavFilename": "plant_not_confident.wav"
+    },
+    {
+      "phraseId": "plant_image_not_clear",
+      "category": "PLANTS",
+      "text": "The image is not clear enough to identify the plant.",
+      "normalizedText": "the image is not clear enough to identify the plant",
+      "wav": "plant_image_not_clear.wav",
+      "wavFilename": "plant_image_not_clear.wav"
+    },
+    {
+      "phraseId": "plant_more_info",
+      "category": "PLANTS",
+      "text": "Would you like more information about this plant?",
+      "normalizedText": "would you like more information about this plant",
+      "wav": "plant_more_info.wav",
+      "wavFilename": "plant_more_info.wav"
+    },
+    {
+      "phraseId": "trail_started",
+      "category": "TRAIL RECORDING",
+      "text": "Got it. Trail recording started.",
+      "normalizedText": "got it trail recording started",
+      "wav": "trail_started.wav",
+      "wavFilename": "trail_started.wav"
+    },
+    {
+      "phraseId": "trail_already_active",
+      "category": "TRAIL RECORDING",
+      "text": "Trail recording is already active.",
+      "normalizedText": "trail recording is already active",
+      "wav": "trail_already_active.wav",
+      "wavFilename": "trail_already_active.wav"
+    },
+    {
+      "phraseId": "trail_saved_all_set",
+      "category": "TRAIL RECORDING",
+      "text": "Trail saved. You’re all set.",
+      "normalizedText": "trail saved you're all set",
+      "wav": "trail_saved_all_set.wav",
+      "wavFilename": "trail_saved_all_set.wav"
+    },
+    {
+      "phraseId": "trail_none_to_stop",
+      "category": "TRAIL RECORDING",
+      "text": "There is no active trail to stop.",
+      "normalizedText": "there is no active trail to stop",
+      "wav": "trail_none_to_stop.wav",
+      "wavFilename": "trail_none_to_stop.wav"
+    },
+    {
+      "phraseId": "trail_recording",
+      "category": "TRAIL RECORDING",
+      "text": "Your route is being recorded.",
+      "normalizedText": "your route is being recorded",
+      "wav": "trail_recording.wav",
+      "wavFilename": "trail_recording.wav"
+    },
+    {
+      "phraseId": "trail_saved_success",
+      "category": "TRAIL RECORDING",
+      "text": "The trail has been saved successfully.",
+      "normalizedText": "the trail has been saved successfully",
+      "wav": "trail_saved_success.wav",
+      "wavFilename": "trail_saved_success.wav"
+    },
+    {
+      "phraseId": "return_starting_back",
+      "category": "RETURN NAVIGATION",
+      "text": "Starting navigation back.",
+      "normalizedText": "starting navigation back",
+      "wav": "return_starting_back.wav",
+      "wavFilename": "return_starting_back.wav"
+    },
+    {
+      "phraseId": "return_turn_around_continue",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn around and continue straight.",
+      "normalizedText": "turn around and continue straight",
+      "wav": "return_turn_around_continue.wav",
+      "wavFilename": "return_turn_around_continue.wav"
+    },
+    {
+      "phraseId": "return_continue_straight",
+      "category": "RETURN NAVIGATION",
+      "text": "Please continue straight.",
+      "normalizedText": "please continue straight",
+      "wav": "return_continue_straight.wav",
+      "wavFilename": "return_continue_straight.wav"
+    },
+    {
+      "phraseId": "return_keep_straight",
+      "category": "RETURN NAVIGATION",
+      "text": "Keep going straight.",
+      "normalizedText": "keep going straight",
+      "wav": "return_keep_straight.wav",
+      "wavFilename": "return_keep_straight.wav"
+    },
+    {
+      "phraseId": "return_turn_left",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn left.",
+      "normalizedText": "turn left",
+      "wav": "return_turn_left.wav",
+      "wavFilename": "return_turn_left.wav"
+    },
+    {
+      "phraseId": "return_turn_right",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn right.",
+      "normalizedText": "turn right",
+      "wav": "return_turn_right.wav",
+      "wavFilename": "return_turn_right.wav"
+    },
+    {
+      "phraseId": "return_stay_left",
+      "category": "RETURN NAVIGATION",
+      "text": "Stay left.",
+      "normalizedText": "stay left",
+      "wav": "return_stay_left.wav",
+      "wavFilename": "return_stay_left.wav"
+    },
+    {
+      "phraseId": "return_stay_right",
+      "category": "RETURN NAVIGATION",
+      "text": "Stay right.",
+      "normalizedText": "stay right",
+      "wav": "return_stay_right.wav",
+      "wavFilename": "return_stay_right.wav"
+    },
+    {
+      "phraseId": "return_decision_point",
+      "category": "RETURN NAVIGATION",
+      "text": "You are approaching a decision point.",
+      "normalizedText": "you are approaching a decision point",
+      "wav": "return_decision_point.wav",
+      "wavFilename": "return_decision_point.wav"
+    },
+    {
+      "phraseId": "return_choose_left_right",
+      "category": "RETURN NAVIGATION",
+      "text": "Please choose left or right.",
+      "normalizedText": "please choose left or right",
+      "wav": "return_choose_left_right.wav",
+      "wavFilename": "return_choose_left_right.wav"
+    },
+    {
+      "phraseId": "return_wrong_way",
+      "category": "RETURN NAVIGATION",
+      "text": "You are going the wrong way.",
+      "normalizedText": "you are going the wrong way",
+      "wav": "return_wrong_way.wav",
+      "wavFilename": "return_wrong_way.wav"
+    },
+    {
+      "phraseId": "return_turn_around",
+      "category": "RETURN NAVIGATION",
+      "text": "Please turn around.",
+      "normalizedText": "please turn around",
+      "wav": "return_turn_around.wav",
+      "wavFilename": "return_turn_around.wav"
+    },
+    {
+      "phraseId": "return_back_on_route",
+      "category": "RETURN NAVIGATION",
+      "text": "You are back on the route.",
+      "normalizedText": "you are back on the route",
+      "wav": "return_back_on_route.wav",
+      "wavFilename": "return_back_on_route.wav"
+    },
+    {
+      "phraseId": "return_destination_reached",
+      "category": "RETURN NAVIGATION",
+      "text": "You have reached the destination.",
+      "normalizedText": "you have reached the destination",
+      "wav": "return_destination_reached.wav",
+      "wavFilename": "return_destination_reached.wav"
+    },
+    {
+      "phraseId": "return_starting_point",
+      "category": "RETURN NAVIGATION",
+      "text": "You have returned to the starting point.",
+      "normalizedText": "you have returned to the starting point",
+      "wav": "return_starting_point.wav",
+      "wavFilename": "return_starting_point.wav"
+    },
+    {
+      "phraseId": "return_navigation_complete",
+      "category": "RETURN NAVIGATION",
+      "text": "Navigation is complete.",
+      "normalizedText": "navigation is complete",
+      "wav": "return_navigation_complete.wav",
+      "wavFilename": "return_navigation_complete.wav"
+    },
+    {
+      "phraseId": "return_location_not_accurate",
+      "category": "RETURN NAVIGATION",
+      "text": "Your location is not accurate enough yet.",
+      "normalizedText": "your location is not accurate enough yet",
+      "wav": "return_location_not_accurate.wav",
+      "wavFilename": "return_location_not_accurate.wav"
+    },
+    {
+      "phraseId": "return_finding_location",
+      "category": "RETURN NAVIGATION",
+      "text": "Please wait while I find your location.",
+      "normalizedText": "please wait while i find your location",
+      "wav": "return_finding_location.wav",
+      "wavFilename": "return_finding_location.wav"
+    },
+    {
+      "phraseId": "return_no_safe_route",
+      "category": "RETURN NAVIGATION",
+      "text": "I cannot calculate a safe return route right now.",
+      "normalizedText": "i cannot calculate a safe return route right now",
+      "wav": "return_no_safe_route.wav",
+      "wavFilename": "return_no_safe_route.wav"
+    },
+    {
+      "phraseId": "confirm_continue",
+      "category": "CONFIRMATIONS",
+      "text": "Would you like me to continue?",
+      "normalizedText": "would you like me to continue",
+      "wav": "confirm_continue.wav",
+      "wavFilename": "confirm_continue.wav"
+    },
+    {
+      "phraseId": "confirm_explain",
+      "category": "CONFIRMATIONS",
+      "text": "Would you like me to explain it?",
+      "normalizedText": "would you like me to explain it",
+      "wav": "confirm_explain.wav",
+      "wavFilename": "confirm_explain.wav"
+    },
+    {
+      "phraseId": "confirm_yes",
+      "category": "CONFIRMATIONS",
+      "text": "Did you say yes?",
+      "normalizedText": "did you say yes",
+      "wav": "confirm_yes.wav",
+      "wavFilename": "confirm_yes.wav"
+    },
+    {
+      "phraseId": "confirm_no",
+      "category": "CONFIRMATIONS",
+      "text": "Did you say no?",
+      "normalizedText": "did you say no",
+      "wav": "confirm_no.wav",
+      "wavFilename": "confirm_no.wav"
+    },
+    {
+      "phraseId": "confirm_yes_or_no",
+      "category": "CONFIRMATIONS",
+      "text": "Please answer yes or no.",
+      "normalizedText": "please answer yes or no",
+      "wav": "confirm_yes_or_no.wav",
+      "wavFilename": "confirm_yes_or_no.wav"
+    }
+  ],
+  "templates": [
+    {
+      "phraseId": "template_turn_left_distance",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn left in {distance} metres.",
+      "normalizedText": "turn left in distance metres",
+      "wav": "",
+      "wavFilename": "",
+      "pattern": "^turn left in (?P<distance>[\\w. -]+) metres$"
+    },
+    {
+      "phraseId": "template_turn_right_distance",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn right in {distance} metres.",
+      "normalizedText": "turn right in distance metres",
+      "wav": "",
+      "wavFilename": "",
+      "pattern": "^turn right in (?P<distance>[\\w. -]+) metres$"
+    },
+    {
+      "phraseId": "template_continue_distance",
+      "category": "RETURN NAVIGATION",
+      "text": "Continue straight for {distance} metres.",
+      "normalizedText": "continue straight for distance metres",
+      "wav": "",
+      "wavFilename": "",
+      "pattern": "^continue straight for (?P<distance>[\\w. -]+) metres$"
+    },
+    {
+      "phraseId": "template_alternate_minutes",
+      "category": "RETURN NAVIGATION",
+      "text": "The alternate route takes about {minutes} minutes.",
+      "normalizedText": "the alternate route takes about minutes minutes",
+      "wav": "",
+      "wavFilename": "",
+      "pattern": "^the alternate route takes about (?P<minutes>[\\w. -]+) minutes$"
+    },
+    {
+      "phraseId": "template_route_adds_minutes",
+      "category": "RETURN NAVIGATION",
+      "text": "This route adds about {minutes} minutes.",
+      "normalizedText": "this route adds about minutes minutes",
+      "wav": "",
+      "wavFilename": "",
+      "pattern": "^this route adds about (?P<minutes>[\\w. -]+) minutes$"
+    }
+  ],
+  "generatedTemplates": [
+    {
+      "phraseId": "template_turn_left_distance-e1ffe1c768",
+      "templateId": "template_turn_left_distance",
+      "category": "RETURN NAVIGATION",
+      "text": "Turn left in 25 metres.",
+      "normalizedText": "turn left in 25 metres",
+      "wav": "templates/template_turn_left_distance-e1ffe1c768.wav",
+      "template": "Turn left in {distance} metres.",
+      "wavFilename": "templates/template_turn_left_distance-e1ffe1c768.wav"
+    }
+  ]
+}
