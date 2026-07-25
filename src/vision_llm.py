@@ -88,6 +88,7 @@ If it is a symbol-only sign, identify the likely meaning of the symbol.
 If a warning/caution icon is visible, describe the symbol and likely caution meaning.
 If the image is blurry, angled, too small, or unclear, set is_clear_enough to false.
 If it is a plant, do not guess exact species unless clearly identifiable.
+If it is another clear object, name the main centered object in description, such as a laptop, cup, chair, or bottle.
 If uncertain, set uncertain to true.
 Do not invent text.
 Do not over-explain.
@@ -119,6 +120,26 @@ Context:
         return None
     print(f'vision llm: {data.get("image_type")}, visible_text="{data.get("visible_text")}", confidence={data.get("confidence")}')
     return data
+
+
+def confirm_visual_candidate(crop, candidate_kind, config):
+    analysis = analyze_image_with_gemma(crop, candidate_kind, "AUTO_PROMPT_VERIFY", config)
+    image_type = (analysis or {}).get("image_type")
+    try:
+        confidence = float((analysis or {}).get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    expected_types = {"plant"} if candidate_kind == "plant" else {"sign", "symbol_sign", "text_sign"}
+    accepted = (
+        image_type in expected_types
+        and bool((analysis or {}).get("is_clear_enough"))
+        and confidence >= getattr(config, "visual_prompt_gemini_confidence", 0.85)
+    )
+    print(
+        f"VISUAL_GEMINI_GATE candidate={candidate_kind} result={image_type or 'unknown'} "
+        f"confidence={confidence:.2f} accepted={str(accepted).lower()}"
+    )
+    return accepted
 
 
 def verify_plant_candidate(crop, config):

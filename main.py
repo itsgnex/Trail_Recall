@@ -46,7 +46,7 @@ from src.speech_out import cancel_reply_capture, is_speaking, log_first_transcri
 from src.trail_phone import android_bridge_diagnostics, check_trail_health, format_trail_error, send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
-from src.vision_llm import verify_same_sign
+from src.vision_llm import confirm_visual_candidate, verify_same_sign
 
 
 def save_debug_crop(kind, crop):
@@ -63,6 +63,14 @@ def capture_center_crop(camera, config):
         return None
     crop, _ = focus_crop(frame, config.focus_fraction)
     return crop
+
+
+def _vision_kind_for_intent(intent):
+    if intent in {Intent.READ_SIGN_TEXT, Intent.EXPLAIN_SIGN_MEANING}:
+        return "sign"
+    if intent in {Intent.IDENTIFY_PLANT, Intent.EXPLAIN_PLANT}:
+        return "plant"
+    return "object"
 
 
 def maybe_store_scene_memory(kind, crop, answer, config, state, crop_path=None):
@@ -527,7 +535,7 @@ def handle_voice_command(transcript, config, state, camera):
             if crop is None:
                 print("camera frame was unavailable for voice command")
                 return
-            crop_kind = "sign" if intent in {Intent.READ_SIGN_TEXT, Intent.EXPLAIN_SIGN_MEANING} else "plant" if intent in {Intent.IDENTIFY_PLANT, Intent.EXPLAIN_PLANT} else state.last_detected_kind or "object"
+            crop_kind = _vision_kind_for_intent(intent)
             crop_path = save_debug_crop(crop_kind, crop)
             log_stage("VISION_REQUEST_START", kind=crop_kind)
             if crop_kind == "sign":
@@ -537,6 +545,7 @@ def handle_voice_command(transcript, config, state, camera):
                 state.last_detected_kind = "plant"
                 answer = answer_for("plant", crop, intent, config, state)
             else:
+                state.last_detected_kind = "object"
                 answer = describe_current_object(crop, config, state)
             log_stage("VISION_REQUEST_END", kind=crop_kind)
 
@@ -606,7 +615,7 @@ def handle_voice_command(transcript, config, state, camera):
             if crop is None:
                 print("camera frame was unavailable for follow-up voice command")
                 return
-            crop_kind = "sign" if intent in {Intent.READ_SIGN_TEXT, Intent.EXPLAIN_SIGN_MEANING} else "plant" if intent in {Intent.IDENTIFY_PLANT, Intent.EXPLAIN_PLANT} else state.last_detected_kind or "object"
+            crop_kind = _vision_kind_for_intent(intent)
             crop_path = save_debug_crop(crop_kind, crop)
             log_stage("VISION_REQUEST_START", kind=crop_kind)
             if crop_kind == "sign":
@@ -616,6 +625,7 @@ def handle_voice_command(transcript, config, state, camera):
                 state.last_detected_kind = "plant"
                 answer = answer_for("plant", crop, intent, config, state)
             else:
+                state.last_detected_kind = "object"
                 answer = describe_current_object(crop, config, state)
             log_stage("VISION_REQUEST_END", kind=crop_kind)
             state.last_crop_path = crop_path
@@ -751,7 +761,7 @@ def handle_follow_up(crop, config, state, camera):
                     fresh_crop = capture_center_crop(camera, config)
                     if fresh_crop is not None:
                         crop = fresh_crop
-                        state.last_crop_path = save_debug_crop(state.last_detected_kind or "object", crop)
+                        state.last_crop_path = save_debug_crop("object", crop)
                     if intent == Intent.IDENTIFY_CURRENT_OBJECT:
                         state.last_assistant_question_type = "retry_clearer_view"
                     answer = describe_current_object(crop, config, state)
@@ -1189,6 +1199,9 @@ def main():
                             last_crop_log_kind = result.kind
                         if trigger.update(result.kind):
                             if not visual_prompt_should_start(result.kind, crop, config, state, now=now):
+                                continue
+                            if not confirm_visual_candidate(crop, result.kind, config):
+                                visual_interaction_complete(state, config, "gemini_rejected", now=now)
                                 continue
                             crop_path = save_debug_crop(result.kind, crop)
                             remembered = None

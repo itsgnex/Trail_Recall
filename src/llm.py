@@ -459,6 +459,16 @@ def describe_current_object(crop, config, state=None):
         if natural:
             _store_cached_response(state, cache_key, natural)
             return natural
+    if image_type == "other":
+        description = ((image_analysis or {}).get("description") or "").strip()
+        try:
+            confidence = float((image_analysis or {}).get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if description and confidence >= 0.7:
+            answer = clean_spoken_answer(description)
+            _store_cached_response(state, cache_key, answer)
+            return answer
     prompt = f"""
 {RULES}
 Describe the main object in the center focus crop in one or two short sentences.

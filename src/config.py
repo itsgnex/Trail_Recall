@@ -28,7 +28,7 @@ def env_list(name, default):
 @dataclass(frozen=True)
 class Config:
     camera_index: int = 0
-    focus_fraction: float = 0.45
+    focus_fraction: float = 0.55
     analysis_interval: float = 1.0
     dwell_seconds: float = 2.0
     cooldown_seconds: float = 9.0
@@ -98,6 +98,7 @@ class Config:
     speak_follow_up_offer: bool = False
     follow_up_silence_returns_to_scan: bool = True
     visual_prompt_cooldown_seconds: float = 7.0
+    visual_prompt_gemini_confidence: float = 0.85
     visual_reply_max_retries: int = 1
     visual_object_gone_seconds: float = 3.0
     visual_object_gone_min_frames: int = 8
@@ -201,6 +202,7 @@ class Config:
             stt_provider = "openrouter_first"
         return cls(
             camera_index=camera_index if camera_index is not None else int(os.getenv("CAMERA_INDEX", "0")),
+            focus_fraction=float(os.getenv("FOCUS_FRACTION", "0.55")),
             use_clip=env_bool("USE_CLIP", True),
             use_llm_intent=env_bool("USE_LLM_INTENT", True),
             use_ollama=env_bool("USE_OLLAMA", True),
@@ -270,6 +272,7 @@ class Config:
             speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
             follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
             visual_prompt_cooldown_seconds=float(os.getenv("VISUAL_PROMPT_COOLDOWN_SECONDS", "7")),
+            visual_prompt_gemini_confidence=float(os.getenv("VISUAL_PROMPT_GEMINI_CONFIDENCE", "0.85")),
             visual_reply_max_retries=int(os.getenv("VISUAL_REPLY_MAX_RETRIES", "1")),
             visual_object_gone_seconds=float(os.getenv("VISUAL_OBJECT_GONE_SECONDS", "3")),
             visual_object_gone_min_frames=int(os.getenv("VISUAL_OBJECT_GONE_MIN_FRAMES", "8")),
