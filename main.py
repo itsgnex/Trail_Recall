@@ -441,23 +441,14 @@ def handle_voice_command(transcript, config, state, camera):
             getattr(config, "allow_single_word_wake", False),
         )
         if not command:
-            # Give a just-spoken wake phrase a quiet command window before prompting.
+            speak("Yes?")
             command = listen(
                 config,
                 typed_fallback=False,
                 record_seconds=getattr(config, "command_record_seconds", 2.5),
                 label="recording command",
-                after_tts=False,
+                after_tts=True,
             )
-            if not command:
-                speak("Yes?")
-                command = listen(
-                    config,
-                    typed_fallback=False,
-                    record_seconds=getattr(config, "command_record_seconds", 2.5),
-                    label="recording command",
-                    after_tts=True,
-                )
         command = strip_wake_phrase(
             command,
             getattr(config, "wake_phrases", ()),

@@ -387,28 +387,16 @@ class WakeLatencyTests(unittest.TestCase):
         self.assertIn('COMMAND transcript="what is this"', buf.getvalue())
         self.assertEqual(state.last_user_transcript, "what is this")
 
-    def test_wake_only_listens_quietly_before_prompting(self):
+    def test_wake_only_prompts_before_listening(self):
         state = SessionState()
         with patch("main.listen", return_value="take me back") as listen, patch("main.speak") as speak, patch(
             "main.classify_intent_with_source", return_value=(Intent.NAVIGATE_BACK, "test")
         ), patch("main.handle_trail_intent", return_value=True):
             main.handle_voice_command("hey trail", Config(), state, camera=None)
 
-        self.assertFalse(speak.called)
-        self.assertEqual(listen.call_count, 1)
-        self.assertFalse(listen.call_args.kwargs["after_tts"])
-
-    def test_wake_only_prompts_after_an_empty_quiet_window(self):
-        state = SessionState()
-        with patch("main.listen", side_effect=["", "take me back"]) as listen, patch("main.speak") as speak, patch(
-            "main.classify_intent_with_source", return_value=(Intent.NAVIGATE_BACK, "test")
-        ), patch("main.handle_trail_intent", return_value=True):
-            main.handle_voice_command("hey trail", Config(), state, camera=None)
-
         self.assertEqual(speak.call_args.args[0], "Yes?")
-        self.assertEqual(listen.call_count, 2)
-        self.assertFalse(listen.call_args_list[0].kwargs["after_tts"])
-        self.assertTrue(listen.call_args_list[1].kwargs["after_tts"])
+        self.assertEqual(listen.call_count, 1)
+        self.assertTrue(listen.call_args.kwargs["after_tts"])
 
     def test_assistant_echo_rejected_and_recaptured_once(self):
         speech_out._last_spoken_text = "I did not catch the full question. Please say it again."
