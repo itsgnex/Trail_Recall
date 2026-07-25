@@ -32,5 +32,8 @@ class SessionState:
     visual_object_present: bool = False
     visual_object_last_seen: float = 0.0
     visual_object_absent_since: float = 0.0
+    visual_object_absent_frames: int = 0
+    visual_object_absent_signature: object | None = None
     visual_cooldown_until: float = 0.0
     visual_reply_retries: int = 0
+    trail_recording_active: bool = False

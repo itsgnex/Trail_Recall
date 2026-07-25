@@ -78,16 +78,26 @@ def _plant_summary(plant_id):
     return ", ".join(parts)
 
 
-def plant_response_from_id(plant_id):
+def plant_response_from_id(plant_id, config=None):
     if not isinstance(plant_id, PlantIdResult) or not plant_id.success:
         return "This appears to be a plant, but I am not certain of the exact type from this image."
 
-    if plant_id.confidence_level == "high" and plant_id.common_name:
-        lead = f"This appears to be {plant_id.common_name}"
-    elif plant_id.confidence_level == "medium" and plant_id.common_name:
+    min_confidence = float(getattr(config, "plantnet_min_confidence", 0.25) if config is not None else 0.25)
+    high_confidence = float(getattr(config, "plantnet_high_confidence", 0.70) if config is not None else 0.70)
+    if plant_id.score < min_confidence:
+        from . import app_log
+
+        app_log.debug(f"plantnet low confidence score={plant_id.score:.2f} threshold={min_confidence:.2f}")
+        if plant_id.common_name:
+            return clean_spoken_answer(f"I can see a plant, but I could not identify it reliably from this view. PlantNet's closest low-confidence match was {plant_id.common_name}.")
+        return "I can see a plant, but I could not identify it reliably from this view."
+
+    if plant_id.score >= high_confidence and plant_id.common_name:
+        lead = f"This looks like {plant_id.common_name}"
+    elif plant_id.common_name:
         lead = f"This may be {plant_id.common_name}"
     elif plant_id.scientific_name:
-        lead = f"This looks like {plant_id.scientific_name}"
+        lead = f"This may be {plant_id.scientific_name}"
     else:
         lead = "This appears to be a plant"
 
@@ -329,7 +339,7 @@ def answer_for(kind, crop, intent, config=None, state=None):
         if state is not None:
             state.last_plant_id_result = plant_id
             state.last_vision_result = None
-        answer = plant_response_from_id(plant_id)
+        answer = plant_response_from_id(plant_id, config)
         _store_cached_response(state, cache_key, answer)
         return answer
 
@@ -350,7 +360,7 @@ def answer_for(kind, crop, intent, config=None, state=None):
                 return reject_answer
             if state is not None:
                 state.last_plant_id_result = plant_id
-            answer = plant_response_from_id(plant_id)
+            answer = plant_response_from_id(plant_id, config)
         else:
             vision_description = (image_analysis or {}).get("description") or ""
             answer = clean_spoken_answer(f"This appears to be a plant. {vision_description}" if vision_description else "This appears to be a plant, but I cannot identify the exact type yet.")

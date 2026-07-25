@@ -13,6 +13,7 @@ from src.camera import Camera, split_stream_urls, wait_for_publisher
 from src.config import Config
 from src.latency import log_stage, new_interaction, set_interaction
 from src.intent import Intent, classify_intent_with_source
+from src.interaction_pause import interaction_is_paused, log_interaction_skip
 from src.clip_classifier import get_crop_embedding
 from src.llm import answer_for, answer_general_question_with_1b, describe_current_object, generate_more_detail_response
 from src.ocr import read_text
@@ -41,7 +42,7 @@ from src.session_state import SessionState
 from src.scene_memory import lookup_scene_memory, restore_plant_id, store_scene_memory
 from src.sign_memory import add_or_update_sign_memory, cleanup_old_signs, find_similar_sign, is_recent_duplicate
 from src.speech_in import calibrate_wake_ambient, is_incomplete_command, is_wake_check_command, listen, listen_for_wake_phrase, preload_whisper_model, strip_wake_phrase
-from src.speech_out import is_speaking, log_first_transcript_after_trail, speak
+from src.speech_out import cancel_reply_capture, is_speaking, log_first_transcript_after_trail, speak
 from src.trail_phone import android_bridge_diagnostics, check_trail_health, format_trail_error, send_trail_command
 from src.trigger import DwellTrigger
 from src.vision import analyze_crop, draw_focus_box, focus_crop
@@ -115,7 +116,10 @@ def _visual_same_object(kind, signature, state, threshold=8.0):
 
 
 def _visual_set_state(state, value):
+    previous = state.visual_prompt_state
     state.visual_prompt_state = value
+    if previous != value:
+        app_log.debug(f"VISUAL_STATE from={previous} to={value}")
 
 
 def _visual_log_suppressed(reason, **values):
@@ -123,28 +127,49 @@ def _visual_log_suppressed(reason, **values):
     app_log.rate_limited(f"visual_suppressed_{reason}", 10, f"VISUAL_PROMPT suppressed reason={reason}" + (f" {suffix}" if suffix else ""), level="DEBUG")
 
 
-def visual_mark_absence(kind, config, state, now=None):
+def visual_mark_absence(kind, config, state, crop=None, now=None):
     now = time.monotonic() if now is None else now
-    if state.visual_prompt_state == VISUAL_COOLDOWN and now >= state.visual_cooldown_until:
+    if state.visual_prompt_state == VISUAL_COOLDOWN and now >= state.visual_cooldown_until and not state.visual_object_present:
         _visual_set_state(state, VISUAL_IDLE)
     if kind in {"plant", "sign"} and kind == state.visual_object_kind:
         state.visual_object_absent_since = 0.0
+        state.visual_object_absent_frames = 0
+        state.visual_object_last_seen = now
         return
     if not state.visual_object_present:
         return
     if not state.visual_object_absent_since:
         state.visual_object_absent_since = now
-    if now - state.visual_object_absent_since >= getattr(config, "visual_object_gone_seconds", 3.0):
+        state.visual_object_absent_signature = crop_signature(crop) if crop is not None else None
+    state.visual_object_absent_frames += 1
+    current_signature = crop_signature(crop) if crop is not None else state.visual_object_absent_signature
+    scene_changed = (
+        current_signature is not None
+        and _visual_signature_distance(current_signature, state.visual_object_signature)
+        >= getattr(config, "visual_rearm_scene_change_threshold", 18.0)
+    )
+    if (
+        now - state.visual_object_absent_since >= getattr(config, "visual_object_gone_seconds", 3.0)
+        and state.visual_object_absent_frames >= getattr(config, "visual_object_gone_min_frames", 8)
+        and scene_changed
+    ):
         state.visual_object_present = False
         state.visual_object_absent_since = 0.0
+        state.visual_object_absent_frames = 0
+        state.visual_object_absent_signature = None
+        if state.visual_prompt_state == VISUAL_COOLDOWN and now >= state.visual_cooldown_until:
+            _visual_set_state(state, VISUAL_IDLE)
 
 
 def visual_prompt_should_start(kind, crop, config, state, now=None):
     now = time.monotonic() if now is None else now
     if kind not in {"plant", "sign"}:
-        visual_mark_absence(kind, config, state, now=now)
+        visual_mark_absence(kind, config, state, crop=crop, now=now)
         return False
-    if state.visual_prompt_state == VISUAL_COOLDOWN and now >= state.visual_cooldown_until:
+    if interaction_is_paused():
+        log_interaction_skip("VISUAL_PROMPT_SKIPPED")
+        return False
+    if state.visual_prompt_state == VISUAL_COOLDOWN and now >= state.visual_cooldown_until and not state.visual_object_present:
         _visual_set_state(state, VISUAL_IDLE)
     if is_speaking():
         _visual_log_suppressed("tts_playing")
@@ -172,6 +197,8 @@ def visual_prompt_should_start(kind, crop, config, state, now=None):
     state.visual_object_present = True
     state.visual_object_last_seen = now
     state.visual_object_absent_since = 0.0
+    state.visual_object_absent_frames = 0
+    state.visual_object_absent_signature = None
     state.visual_reply_retries = 0
     _visual_set_state(state, VISUAL_PROMPT_PLAYING)
     print(f"VISUAL_PROMPT started type={kind} visualId={state.visual_interaction_id}")
@@ -180,10 +207,22 @@ def visual_prompt_should_start(kind, crop, config, state, now=None):
 
 def visual_interaction_complete(state, config, result, now=None):
     now = time.monotonic() if now is None else now
-    state.visual_cooldown_until = now + getattr(config, "visual_prompt_cooldown_seconds", 30.0)
+    state.visual_cooldown_until = now + getattr(config, "visual_prompt_cooldown_seconds", 7.0)
+    previous = state.visual_prompt_state
     _visual_set_state(state, VISUAL_COOLDOWN)
     state.visual_reply_retries = 0
+    if previous == VISUAL_RESULT_PLAYING:
+        print("VISUAL_STATE from=RESULT_PLAYING to=COOLDOWN")
     print(f"VISUAL_INTERACTION completed result={result}")
+
+
+def visual_speak_final(text, state, config, result="yes"):
+    _visual_set_state(state, VISUAL_RESULT_PLAYING)
+
+    def _complete(_event_id, _reason):
+        visual_interaction_complete(state, config, result)
+
+    return speak(text, expect_reply=False, on_complete=_complete)
 
 
 def needs_clearer_view(answer):
@@ -298,6 +337,9 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
 
 
 def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text="", record_seconds=None):
+    if interaction_is_paused():
+        log_interaction_skip("FOLLOW_UP_SKIPPED")
+        return "", None, None
     state.last_assistant_question_type = "follow_up_offer"
     state.follow_up_enabled = True
     state.awaiting_follow_up_reply = True
@@ -321,6 +363,7 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
             prompt,
             ocr_text,
             last_question_type=state.last_assistant_question_type,
+            interaction_context=_intent_context(state, "follow_up"),
         )
         log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         print(f'follow-up said: "{heard}" -> {intent.value} via {source}')
@@ -332,7 +375,28 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
         state.awaiting_follow_up_reply = False
 
 
-def handle_trail_intent(intent, config):
+def _intent_context(state, interaction_type):
+    visual_active = state.visual_prompt_state not in {VISUAL_IDLE, VISUAL_COOLDOWN}
+    return {
+        "interaction_type": interaction_type,
+        "visual_interaction_active": visual_active,
+        "visual_interaction_type": state.last_detected_kind if visual_active else None,
+        "trail_recording_active": state.trail_recording_active,
+    }
+
+
+def _clarification_for_context(state, transcript=""):
+    if state.visual_prompt_state not in {VISUAL_IDLE, VISUAL_COOLDOWN}:
+        if state.last_detected_kind == "sign":
+            return "Would you like me to read the sign?"
+        if state.last_detected_kind == "plant":
+            return "Would you like me to identify the plant?"
+    if state.trail_recording_active or any(word in (transcript or "").lower() for word in ("trail", "route", "back", "record", "start")):
+        return "Would you like me to start the trail or take you back?"
+    return get_clarification_response()
+
+
+def handle_trail_intent(intent, config, state=None):
     actions = {
         Intent.START_TRAIL: "start",
         Intent.STOP_TRAIL: "stop",
@@ -353,6 +417,10 @@ def handle_trail_intent(intent, config):
         }
         confirmation = trail_confirmations.get(intent)
         if ok and confirmation:
+            if state is not None and intent == Intent.START_TRAIL:
+                state.trail_recording_active = True
+            elif state is not None and intent == Intent.STOP_TRAIL:
+                state.trail_recording_active = False
             speak(confirmation(), trail_command=True)
         elif not ok:
             speak(format_trail_error(detail), trail_command=intent in trail_confirmations)
@@ -361,6 +429,9 @@ def handle_trail_intent(intent, config):
 
 
 def handle_voice_command(transcript, config, state, camera):
+    if interaction_is_paused():
+        log_interaction_skip("VOICE_COMMAND_SKIPPED")
+        return
     state.is_busy = True
     state.is_processing_command = True
     try:
@@ -370,14 +441,23 @@ def handle_voice_command(transcript, config, state, camera):
             getattr(config, "allow_single_word_wake", False),
         )
         if not command:
-            speak("Yes?")
+            # Give a just-spoken wake phrase a quiet command window before prompting.
             command = listen(
                 config,
                 typed_fallback=False,
                 record_seconds=getattr(config, "command_record_seconds", 2.5),
                 label="recording command",
-                after_tts=True,
+                after_tts=False,
             )
+            if not command:
+                speak("Yes?")
+                command = listen(
+                    config,
+                    typed_fallback=False,
+                    record_seconds=getattr(config, "command_record_seconds", 2.5),
+                    label="recording command",
+                    after_tts=True,
+                )
         command = strip_wake_phrase(
             command,
             getattr(config, "wake_phrases", ()),
@@ -417,6 +497,7 @@ def handle_voice_command(transcript, config, state, camera):
             state.last_detected_kind,
             state.last_prompt or "",
             last_question_type=state.last_assistant_question_type,
+            interaction_context=_intent_context(state, "wake_command"),
         )
         log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         print(f"INTENT type={intent.value} source={source}")
@@ -435,7 +516,7 @@ def handle_voice_command(transcript, config, state, camera):
         if intent == Intent.SPEAK_SLOWER:
             speak("Of course. I’ll keep it slower and brief.")
             return
-        if handle_trail_intent(intent, config):
+        if handle_trail_intent(intent, config, state):
             return
         if intent == Intent.MORE_DETAIL:
             answer = generate_more_detail_response(state, config)
@@ -478,7 +559,7 @@ def handle_voice_command(transcript, config, state, camera):
             maybe_store_scene_memory(crop_kind, crop, answer, config, state, crop_path)
             return
 
-        clarification_prompt = get_clarification_response()
+        clarification_prompt = _clarification_for_context(state, command)
         state.awaiting_follow_up_reply = True
         speak(clarification_prompt)
         heard, follow_up_intent, follow_up_source = listen_for_follow_up_reply(
@@ -515,7 +596,7 @@ def handle_voice_command(transcript, config, state, camera):
         if intent == Intent.SPEAK_SLOWER:
             speak("Of course. I’ll keep it slower and brief.")
             return
-        if handle_trail_intent(intent, config):
+        if handle_trail_intent(intent, config, state):
             return
         if intent == Intent.MORE_DETAIL:
             answer = generate_more_detail_response(state, config)
@@ -555,7 +636,7 @@ def handle_voice_command(transcript, config, state, camera):
                 record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
             maybe_store_scene_memory(crop_kind, crop, answer, config, state, crop_path)
             return
-        speak(get_clarification_response())
+        speak(_clarification_for_context(state, heard))
         return
     finally:
         state.is_processing_command = False
@@ -566,6 +647,10 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
     if not (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False)):
         return
     while not stop_event.is_set():
+        if interaction_is_paused():
+            log_interaction_skip("WAKE_SKIPPED")
+            time.sleep(0.1)
+            continue
         paused_for_tts = getattr(config, "pause_wake_during_tts", True) and is_speaking()
         if paused_for_tts or (getattr(config, "pause_wake_during_tts", True) and (getattr(state, "is_busy", False) or getattr(state, "is_processing_command", False) or getattr(state, "follow_up_enabled", False) or getattr(state, "awaiting_follow_up_reply", False))):
             time.sleep(0.1)
@@ -585,6 +670,9 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
 
 
 def handle_follow_up(crop, config, state, camera):
+    if interaction_is_paused():
+        log_interaction_skip("FOLLOW_UP_SKIPPED")
+        return
     if not getattr(config, "follow_up_mode", True):
         return
     if state.last_assistant_question_type != "follow_up_offer":
@@ -615,6 +703,7 @@ def handle_follow_up(crop, config, state, camera):
                 state.last_detected_kind,
                 state.last_final_answer or "",
                 last_question_type=state.last_assistant_question_type,
+                interaction_context=_intent_context(state, "follow_up"),
             )
             print(f'follow-up said: "{heard}" -> {intent.value} via {source}')
             state.last_user_transcript = heard
@@ -640,7 +729,7 @@ def handle_follow_up(crop, config, state, camera):
                     state.last_assistant_question_type = "retry_clearer_view"
                 answer = describe_current_object(crop, config, state)
             elif intent == Intent.ASK_CLARIFICATION:
-                clarification_prompt = get_clarification_response()
+                clarification_prompt = _clarification_for_context(state, heard)
                 state.awaiting_follow_up_reply = True
                 speak(clarification_prompt)
                 heard, follow_up_intent, follow_up_source = listen_for_follow_up_reply(
@@ -706,6 +795,9 @@ def handle_follow_up(crop, config, state, camera):
 
 
 def handle_trigger(kind, crop, config, state, camera, crop_path=None):
+    if interaction_is_paused():
+        log_interaction_skip("VISUAL_INTERACTION_SKIPPED")
+        return
     state.is_busy = True
     try:
         crop_path = crop_path or save_debug_crop(kind, crop)
@@ -721,7 +813,7 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         state.last_prompt = prompt
         state.last_assistant_question_type = "initial_permission"
         _visual_set_state(state, VISUAL_PROMPT_PLAYING)
-        speak(prompt)
+        speak(prompt, expect_reply=True)
         _visual_set_state(state, VISUAL_WAITING_FOR_REPLY)
         state.awaiting_follow_up_reply = True
         try:
@@ -739,7 +831,15 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
             return
         ocr_text = read_text(crop) if kind == "sign" else ""
         log_stage("INTENT_ROUTING_START")
-        intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
+        intent, source = classify_intent_with_source(
+            heard,
+            config,
+            kind,
+            prompt,
+            ocr_text,
+            last_question_type=state.last_assistant_question_type,
+            interaction_context=_intent_context(state, "reply"),
+        )
         log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
         print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
         state.last_user_transcript = heard
@@ -747,8 +847,8 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
 
         if intent == Intent.REPEAT_LAST_MESSAGE:
             _visual_set_state(state, VISUAL_PROMPT_PLAYING)
-            speak(get_repeat_response())
-            speak(prompt)
+            speak(get_repeat_response(), expect_reply=False)
+            speak(prompt, expect_reply=True)
             _visual_set_state(state, VISUAL_WAITING_FOR_REPLY)
             heard = listen(
                 config,
@@ -757,7 +857,15 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
                 silence_ms=getattr(config, "confirmation_silence_ms", 350),
             )
             log_stage("INTENT_ROUTING_START")
-            intent, source = classify_intent_with_source(heard, config, kind, prompt, ocr_text, last_question_type=state.last_assistant_question_type)
+            intent, source = classify_intent_with_source(
+                heard,
+                config,
+                kind,
+                prompt,
+                ocr_text,
+                last_question_type=state.last_assistant_question_type,
+                interaction_context=_intent_context(state, "reply"),
+            )
             log_stage("INTENT_ROUTING_END", intent=intent.value, source=source)
             print(f'user said: "{heard or "[nothing heard]"}" -> {intent.value} via {source}')
             state.last_user_transcript = heard
@@ -765,9 +873,8 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
 
         if intent in {Intent.CANCEL, Intent.STOP_LISTENING}:
             _visual_set_state(state, VISUAL_RESULT_PLAYING)
-            speak("Okay.")
+            visual_speak_final("Okay.", state, config, "no")
             state.last_assistant_question_type = "none"
-            visual_interaction_complete(state, config, "no")
             return
         if intent == Intent.ASK_CLARIFICATION:
             if state.visual_reply_retries >= getattr(config, "visual_reply_max_retries", 1):
@@ -775,10 +882,10 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
                 visual_interaction_complete(state, config, "clarification_failed")
                 return
             state.visual_reply_retries += 1
-            clarification_prompt = get_clarification_response()
+            clarification_prompt = _clarification_for_context(state, heard)
             state.awaiting_follow_up_reply = True
             _visual_set_state(state, VISUAL_PROMPT_PLAYING)
-            speak(clarification_prompt)
+            speak(clarification_prompt, expect_reply=True)
             _visual_set_state(state, VISUAL_WAITING_FOR_REPLY)
             heard, follow_up_intent, follow_up_source = listen_for_follow_up_reply(
                 clarification_prompt,
@@ -800,10 +907,8 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
             intent = follow_up_intent
             source = follow_up_source
         if intent == Intent.SPEAK_SLOWER:
-            _visual_set_state(state, VISUAL_RESULT_PLAYING)
-            speak("Of course. I’ll keep it slower and brief.")
+            visual_speak_final("Of course. I’ll keep it slower and brief.", state, config, "yes")
             state.last_assistant_question_type = "none"
-            visual_interaction_complete(state, config, "yes")
             return
 
         _visual_set_state(state, VISUAL_ANALYZING)
@@ -818,16 +923,14 @@ def handle_trigger(kind, crop, config, state, camera, crop_path=None):
         state.last_core_answer = answer
         state.last_final_answer = answer
         state.last_answer_time = time.monotonic()
-        _visual_set_state(state, VISUAL_RESULT_PLAYING)
-        speak(answer)
-        visual_interaction_complete(state, config, "yes")
+        visual_speak_final(answer, state, config, "yes")
         state.last_assistant_question_type = "none"
         state.last_follow_up_offer = None
         maybe_store_scene_memory(kind, crop, answer, config, state, crop_path)
         if kind == "sign":
             record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
     finally:
-        if state.visual_prompt_state != VISUAL_COOLDOWN:
+        if state.visual_prompt_state not in {VISUAL_COOLDOWN, VISUAL_RESULT_PLAYING}:
             visual_interaction_complete(state, config, "timeout")
         state.is_busy = False
 
@@ -1088,7 +1191,7 @@ def main():
                         result = analyze_crop(crop, config)
                         now = time.monotonic()
                         if result.kind not in {"plant", "sign"}:
-                            visual_mark_absence(result.kind, config, state, now=now)
+                            visual_mark_absence(result.kind, config, state, crop=crop, now=now)
                         if result.kind in {"plant", "sign"} or result.kind != last_crop_log_kind or now - last_crop_log_at >= getattr(config, "vision_log_interval_seconds", 10):
                             app_log.debug(f"center crop: {result.kind} ({result.reason})")
                             last_crop_log_at = now
@@ -1120,9 +1223,7 @@ def main():
                                 state.last_answer_time = time.monotonic()
                                 state.last_vision_result = remembered.get("vision_result")
                                 state.last_plant_id_result = restore_plant_id(remembered.get("plant_id_result"))
-                                _visual_set_state(state, VISUAL_RESULT_PLAYING)
-                                speak(answer)
-                                visual_interaction_complete(state, config, "yes")
+                                visual_speak_final(answer, state, config, "yes")
                                 if result.kind == "sign" or state.last_detected_kind == "sign":
                                     record_sign_memory(crop, crop_path, config, state, now=state.last_answer_time)
                                 draw_focus_box(frame, box)
@@ -1140,9 +1241,7 @@ def main():
                                         state.last_core_answer = answer
                                         state.last_final_answer = answer
                                         state.last_answer_time = time.monotonic()
-                                        _visual_set_state(state, VISUAL_RESULT_PLAYING)
-                                        speak(answer)
-                                        visual_interaction_complete(state, config, "yes")
+                                        visual_speak_final(answer, state, config, "yes")
                                     else:
                                         visual_interaction_complete(state, config, "no")
                                     draw_focus_box(frame, box)

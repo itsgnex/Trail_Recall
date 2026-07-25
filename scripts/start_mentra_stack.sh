@@ -11,9 +11,9 @@ if [ -f .env ]; then
   set +a
 fi
 
-export MENTRA_STREAM_HOST_IP="${MENTRA_STREAM_HOST_IP:-192.168.0.232}"
-export ANDROID_TRAIL_URL="http://192.168.0.91:8766"
-PHONE_IP="192.168.0.91"
+export MENTRA_STREAM_HOST_IP="${MENTRA_STREAM_HOST_IP:-10.117.240.212}"
+export ANDROID_TRAIL_URL="http://10.117.240.233:8766"
+PHONE_IP="10.117.240.233"
 STREAM_URL="rtmp://${MENTRA_STREAM_HOST_IP}:1935/live/mentra-live"
 
 mac_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"

@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-EXPECTED_MAC_IP = "192.168.0.232"
-EXPECTED_PHONE_IP = "192.168.0.91"
+EXPECTED_MAC_IP = "10.117.240.212"
+EXPECTED_PHONE_IP = "10.117.240.233"
 MENTRA_STREAM_PATH = "live/mentra-live"
 DEFAULT_ANDROID_TRAIL_URL = f"http://{EXPECTED_PHONE_IP}:8766"
 DEFAULT_MENTRA_RTMP_URL = f"rtmp://{EXPECTED_MAC_IP}:1935/{MENTRA_STREAM_PATH}"
@@ -54,7 +54,7 @@ class Config:
     plantnet_project: str = "all"
     plantnet_lang: str = "en"
     plantnet_organ: str = "auto"
-    plantnet_min_confidence: float = 0.45
+    plantnet_min_confidence: float = 0.25
     plantnet_high_confidence: float = 0.70
     plant_response_ai: bool = True
     verify_plant_before_plantnet: bool = True
@@ -97,9 +97,11 @@ class Config:
     max_follow_up_turns: int = 2
     speak_follow_up_offer: bool = False
     follow_up_silence_returns_to_scan: bool = True
-    visual_prompt_cooldown_seconds: float = 30.0
+    visual_prompt_cooldown_seconds: float = 7.0
     visual_reply_max_retries: int = 1
     visual_object_gone_seconds: float = 3.0
+    visual_object_gone_min_frames: int = 8
+    visual_rearm_scene_change_threshold: float = 18.0
     voice_activation_mode: bool = True
     wake_mode: bool = True
     wake_phrases: tuple[str, ...] = (
@@ -221,7 +223,7 @@ class Config:
             plantnet_project=os.getenv("PLANTNET_PROJECT", "all"),
             plantnet_lang=os.getenv("PLANTNET_LANG", "en"),
             plantnet_organ=os.getenv("PLANTNET_ORGAN", "auto"),
-            plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.45")),
+            plantnet_min_confidence=float(os.getenv("PLANTNET_MIN_CONFIDENCE", "0.25")),
             plantnet_high_confidence=float(os.getenv("PLANTNET_HIGH_CONFIDENCE", "0.70")),
             plant_response_ai=env_bool("PLANT_RESPONSE_AI", True),
             verify_plant_before_plantnet=env_bool("VERIFY_PLANT_BEFORE_PLANTNET", True),
@@ -267,9 +269,11 @@ class Config:
             max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "2")),
             speak_follow_up_offer=env_bool("SPEAK_FOLLOW_UP_OFFER", False),
             follow_up_silence_returns_to_scan=env_bool("FOLLOW_UP_SILENCE_RETURNS_TO_SCAN", True),
-            visual_prompt_cooldown_seconds=float(os.getenv("VISUAL_PROMPT_COOLDOWN_SECONDS", "30")),
+            visual_prompt_cooldown_seconds=float(os.getenv("VISUAL_PROMPT_COOLDOWN_SECONDS", "7")),
             visual_reply_max_retries=int(os.getenv("VISUAL_REPLY_MAX_RETRIES", "1")),
             visual_object_gone_seconds=float(os.getenv("VISUAL_OBJECT_GONE_SECONDS", "3")),
+            visual_object_gone_min_frames=int(os.getenv("VISUAL_OBJECT_GONE_MIN_FRAMES", "8")),
+            visual_rearm_scene_change_threshold=float(os.getenv("VISUAL_REARM_SCENE_CHANGE_THRESHOLD", "18")),
             voice_activation_mode=env_bool("VOICE_ACTIVATION_MODE", True),
             wake_mode=env_bool("WAKE_MODE", True),
             wake_phrases=env_list(

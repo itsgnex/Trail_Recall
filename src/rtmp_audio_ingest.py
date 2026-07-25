@@ -6,6 +6,8 @@ import threading
 import time
 from urllib.parse import urlparse
 
+from . import app_log
+
 
 def _local_rtsp_url(stream_url: str) -> str:
     """Read audio from the local mediamtx RTSP stream."""
@@ -25,6 +27,8 @@ class RtmpAudioIngest:
         self._stop = threading.Event()
         self._bytes = 0
         self.started = False
+        self._reconnecting = False
+        self._attempt = 0
 
     @property
     def total_bytes(self) -> int:
@@ -97,18 +101,34 @@ class RtmpAudioIngest:
                     chunk = self._proc.stdout.read(4096)
                     if not chunk:
                         break
+                    if self._reconnecting:
+                        print("STREAM connected")
+                        self._reconnecting = False
+                        self._attempt = 0
                     glasses_mic_buffer().append(chunk, mode="rtsp")
                     self._bytes += len(chunk)
                 code = self._proc.wait(timeout=5)
                 if code != 0 and not self._stop.is_set():
                     err = (self._proc.stderr.read() if self._proc.stderr else b"").decode("utf-8", errors="replace")
                     if err.strip():
-                        print(f"Glasses mic RTSP: ffmpeg exited ({err.strip()[:160]})")
+                        app_log.debug(f"Glasses mic RTSP ffmpeg exited: {err.strip()[:500]}")
             except Exception as exc:
                 if not self._stop.is_set():
                     print(f"Glasses mic RTSP: {exc}")
             finally:
                 self._proc = None
             if not self._stop.is_set():
-                print("Glasses mic RTSP: reconnecting in 1s...")
-                time.sleep(1.0)
+                if not self._reconnecting:
+                    print("STREAM disconnected reason=publisher_stopped")
+                    try:
+                        from .speech_out import cancel_reply_capture
+
+                        cancel_reply_capture("stream_disconnect")
+                        glasses_mic_buffer().clear()
+                    except Exception:
+                        pass
+                    self._reconnecting = True
+                self._attempt += 1
+                delay = min(8, 2 ** min(self._attempt - 1, 3))
+                print(f"STREAM reconnecting attempt={self._attempt} nextRetrySeconds={delay}")
+                time.sleep(delay)

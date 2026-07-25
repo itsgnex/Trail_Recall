@@ -66,7 +66,11 @@ def _clear_tts_state(event_id, reason):
             print(f"TTS microphone pre-delay cleanup failed: {exc}")
     expected_at = active.get("replyCaptureExpectedAt", time.monotonic())
     delay_ms = int((time.monotonic() - expected_at) * 1000)
-    print(f"REPLY_CAPTURE started delayFromExpectedMs={delay_ms}")
+    if active.get("expectReply"):
+        if delay_ms < 0:
+            print(f"REPLY_CAPTURE_SKIPPED reason=stale_event delayFromExpectedMs={delay_ms}")
+        else:
+            print(f"REPLY_CAPTURE started delayFromExpectedMs={delay_ms}")
     if mic_buffer is not None:
         try:
             mic_buffer.clear()
@@ -77,6 +81,12 @@ def _clear_tts_state(event_id, reason):
     log_stage("TTS_STATE_CLEARED", event_id=event_id, reason=reason)
     log_stage("WAKE_LISTENER_RESUMED", event_id=event_id, source="tts_state")
     app_log.debug(f"WAKE_LISTENER_RESUMED eventId={event_id} source=tts_state")
+    callback = active.get("onComplete")
+    if callback:
+        try:
+            callback(event_id, reason)
+        except Exception as exc:
+            print(f"TTS completion callback failed: {exc}")
 
 
 def _schedule_clear(event_id, delay, reason):
@@ -89,17 +99,20 @@ def _schedule_clear(event_id, delay, reason):
     timer.start()
 
 
-def _begin_playback(event_id, text, trail_command):
+def _begin_playback(event_id, text, trail_command, expect_reply=True, on_complete=None):
     global _active_playback
     with _playback_lock:
         previous = _active_playback
         if previous:
             for timer in previous["timers"]:
                 timer.cancel()
+            print("REPLY_CAPTURE_CANCELLED reason=event_replaced")
         _active_playback = {
             "eventId": event_id,
             "text": text,
             "trailCommand": trail_command,
+            "expectReply": expect_reply,
+            "onComplete": on_complete,
             "timers": [],
             "audioDurationMs": 0,
             "replyCaptureExpectedAt": 0.0,
@@ -118,15 +131,19 @@ def notify_playback_started(event_id):
             return
         text = active["text"]
         audio_duration_ms = int(active.get("audioDurationMs") or 0)
+        expect_reply = bool(active.get("expectReply"))
     guard = _post_playback_guard_seconds()
     delay = (audio_duration_ms / 1000.0 if audio_duration_ms > 0 else _estimated_playback_seconds(text)) + guard
     with _playback_lock:
         if _active_playback and _active_playback["eventId"] == event_id:
-            _active_playback["replyCaptureExpectedAt"] = time.monotonic() + delay
+            _active_playback["replyCaptureExpectedAt"] = time.monotonic() + delay if expect_reply else 0.0
     from . import app_log
 
     app_log.debug(f"PLAYBACK_DURATION_MS eventId={event_id} value={audio_duration_ms}")
-    print(f"REPLY_CAPTURE scheduledInMs={int(delay * 1000)} audioDurationMs={audio_duration_ms} guardMs={int(guard * 1000)}")
+    if expect_reply:
+        print(f"REPLY_CAPTURE scheduledInMs={int(delay * 1000)} audioDurationMs={audio_duration_ms} guardMs={int(guard * 1000)}")
+    else:
+        print("REPLY_CAPTURE_SKIPPED reason=final_result")
     _schedule_clear(event_id, delay, "playback_duration_complete")
     log_stage("BLUETOOTH_PLAYBACK_START", event_id=event_id, inferred=False)
 
@@ -135,6 +152,16 @@ def set_playback_duration(event_id, audio_duration_ms):
     with _playback_lock:
         if _active_playback and _active_playback["eventId"] == event_id:
             _active_playback["audioDurationMs"] = int(audio_duration_ms or 0)
+
+
+def cancel_reply_capture(reason="cancelled"):
+    with _playback_lock:
+        active = _active_playback
+        if not active:
+            return
+        active["expectReply"] = False
+        active["replyCaptureExpectedAt"] = 0.0
+    print(f"REPLY_CAPTURE_CANCELLED reason={reason}")
 
 
 def log_first_transcript_after_trail(transcript):
@@ -182,7 +209,7 @@ def last_spoken_text(max_age_seconds=12.0):
     return _last_spoken_text
 
 
-def speak(text, trail_command=False):
+def speak(text, trail_command=False, expect_reply=True, on_complete=None):
     global _last_spoken_text, _last_spoken_at
     _last_spoken_text = (text or "").strip()
     _last_spoken_at = time.monotonic()
@@ -192,7 +219,7 @@ def speak(text, trail_command=False):
     print(f'ASSISTANT "{_last_spoken_text}"')
     log_stage("RESPONSE_TEXT_READY", event_id=event_id, textBytes=len(_last_spoken_text.encode("utf-8")))
     _log_tts(event_id, "response_text_ready", textBytes=len(_last_spoken_text.encode("utf-8")))
-    _begin_playback(event_id, _last_spoken_text, trail_command)
+    _begin_playback(event_id, _last_spoken_text, trail_command, expect_reply=expect_reply, on_complete=on_complete)
     try:
         if _glasses_audio_enabled():
             record = {}
@@ -234,3 +261,4 @@ def speak(text, trail_command=False):
     finally:
         if not playback_deferred:
             _clear_tts_state(event_id, "speak_complete")
+    return event_id

@@ -38,7 +38,7 @@ If you want the normal Mentra glasses flow over the phone hotspot:
 Or run the Python app directly in Mentra stream mode:
 
 ```bash
-export ANDROID_TRAIL_URL="http://192.168.0.91:8766"
+export ANDROID_TRAIL_URL="http://10.117.240.233:8766"
 ./.venv312/bin/python main.py --camera-source mentra
 ```
 
@@ -51,8 +51,8 @@ Open a local Mac camera only when explicitly requested:
 Or point the app at a stream URL directly:
 
 ```bash
-./.venv312/bin/python main.py --camera-source rtmp://192.168.1.65:1935/live/mentra-live --mic 0
-./.venv312/bin/python main.py --camera-source http://192.168.1.65:8888/live/mentra-live/index.m3u8 --mic 0
+./.venv312/bin/python main.py --camera-source rtmp://10.117.240.212:1935/live/mentra-live --mic 0
+./.venv312/bin/python main.py --camera-source http://10.117.240.212:8888/live/mentra-live/index.m3u8 --mic 0
 ```
 
 Use `--camera-source` when you want the Mentra stream to be used as the camera input without OBS.
@@ -104,8 +104,11 @@ FOLLOW_UP_RECORD_SECONDS=1.5
 FOLLOW_UP_SILENCE_MS=300
 CONFIRMATION_RECORD_SECONDS=2
 CONFIRMATION_SILENCE_MS=350
-VISUAL_PROMPT_COOLDOWN_SECONDS=30
+VISUAL_PROMPT_COOLDOWN_SECONDS=7
 VISUAL_REPLY_MAX_RETRIES=1
+VISUAL_OBJECT_GONE_SECONDS=3
+VISUAL_OBJECT_GONE_MIN_FRAMES=8
+VISUAL_REARM_SCENE_CHANGE_THRESHOLD=18
 SPEECH_END_SILENCE_MS=450
 LATENCY_WARN_THRESHOLD_MS=1000
 LATENCY_LOG_FILE_ENABLED=1
@@ -139,8 +142,11 @@ FOLLOW_UP_RECORD_SECONDS=1.5
 MAX_FOLLOW_UP_TURNS=1
 SPEAK_FOLLOW_UP_OFFER=false
 FOLLOW_UP_SILENCE_RETURNS_TO_SCAN=true
-VISUAL_PROMPT_COOLDOWN_SECONDS=30
+VISUAL_PROMPT_COOLDOWN_SECONDS=7
 VISUAL_REPLY_MAX_RETRIES=1
+VISUAL_OBJECT_GONE_SECONDS=3
+VISUAL_OBJECT_GONE_MIN_FRAMES=8
+VISUAL_REARM_SCENE_CHANGE_THRESHOLD=18
 WAKE_MODE=false
 PLANT_ID_PROVIDER=plantnet
 PLANTNET_API_KEY=
@@ -149,7 +155,7 @@ MIC_DEVICE_INDEX=0
 MIC_LISTEN_TIMEOUT=12
 MIC_PHRASE_TIME_LIMIT=7
 MIC_AMBIENT_NOISE_DURATION=1
-ANDROID_TRAIL_URL=http://192.168.0.91:8766
+ANDROID_TRAIL_URL=http://10.117.240.233:8766
 ```
 
 The camera crop sent to vision is currently resized to a **384px max edge** JPEG before being encoded and sent.
@@ -190,7 +196,7 @@ PLANT_ID_PROVIDER=plantnet
 PLANTNET_PROJECT=all
 PLANTNET_LANG=en
 PLANTNET_ORGAN=auto
-PLANTNET_MIN_CONFIDENCE=0.45
+PLANTNET_MIN_CONFIDENCE=0.25
 PLANTNET_HIGH_CONFIDENCE=0.70
 ```
 

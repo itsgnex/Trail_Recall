@@ -1,7 +1,8 @@
 from enum import Enum
+import json
 import re
 
-from .ollama_client import generate_json
+from .openrouter_client import generate as generate_openrouter
 
 
 class Intent(Enum):
@@ -28,6 +29,10 @@ class Intent(Enum):
     CHOOSE_ALTERNATE_ROUTE = "CHOOSE_ALTERNATE_ROUTE"
     GENERAL_QUESTION = "GENERAL_QUESTION"
     ASK_CLARIFICATION = "ASK_CLARIFICATION"
+
+
+GEMINI_INTENT_CONFIDENCE = 0.89
+GEMINI_INTENTS = frozenset(intent.value for intent in Intent if intent != Intent.ASK_CLARIFICATION)
 
 
 def has(text, pattern):
@@ -187,7 +192,61 @@ def classify_intent(text, config=None):
     return intent
 
 
-def classify_intent_with_source(text, config=None, detected_kind=None, last_message="", ocr_text="", clip_confidence=None, last_question_type="none"):
+def _parse_gemini_intent_response(text):
+    try:
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        data = json.loads(text[start:end])
+        intent_name = str(data.get("intent") or data.get("action") or "").strip()
+        confidence = float(data.get("confidence", 0))
+        if intent_name not in GEMINI_INTENTS:
+            return None, confidence
+        return Intent(intent_name), confidence
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return None, 0.0
+
+
+def confirm_ambiguous_intent_with_gemini(text, config, detected_kind=None, last_message="", last_question_type="none", interaction_context=None):
+    from .interaction_pause import interaction_is_paused
+
+    if interaction_is_paused():
+        print("GEMINI_INTENT_CONFIRMATION result=ASK_CLARIFICATION reason=interaction_paused")
+        return None
+    context = interaction_context or {}
+    print(f'GEMINI_INTENT_CONFIRMATION started transcript="{text}"')
+    if not getattr(config, "openrouter_api_key", ""):
+        print("GEMINI_INTENT_CONFIRMATION result=ASK_CLARIFICATION reason=missing_api_key")
+        return None
+
+    prompt = f"""
+Return JSON only. No markdown or explanation.
+Choose one intent from this exact list: {", ".join(sorted(GEMINI_INTENTS))}, ASK_CLARIFICATION.
+Transcript: {text!r}
+Interaction type: {context.get("interaction_type", "main_command")}
+Visual interaction active: {bool(context.get("visual_interaction_active", False))}
+Visual interaction type: {context.get("visual_interaction_type") or detected_kind or "none"}
+Trail recording active: {bool(context.get("trail_recording_active", False))}
+Assistant prompt: {last_message!r}
+Last assistant question type: {last_question_type!r}
+
+Interpret incomplete speech only when the intent is clear from this context. Otherwise choose ASK_CLARIFICATION.
+Schema: {{"intent":"START_TRAIL","confidence":0.94,"normalized_command":"start the trail"}}
+"""
+    try:
+        response = generate_openrouter(prompt, config)
+    except Exception:
+        print("GEMINI_INTENT_CONFIRMATION result=ASK_CLARIFICATION reason=request_failed")
+        return None
+    intent, confidence = _parse_gemini_intent_response(response)
+    if intent is not None and confidence >= GEMINI_INTENT_CONFIDENCE:
+        print(f"GEMINI_INTENT_CONFIRMATION result={intent.value} confidence={confidence:.2f}")
+        return intent
+    reason = "invalid_response" if not response or intent is None else "low_confidence"
+    print(f"GEMINI_INTENT_CONFIRMATION result=ASK_CLARIFICATION reason={reason}")
+    return None
+
+
+def classify_intent_with_source(text, config=None, detected_kind=None, last_message="", ocr_text="", clip_confidence=None, last_question_type="none", interaction_context=None):
     permission_reply = infer_permission_reply(text or "")
     if text and last_question_type in {"initial_permission", "follow_up_offer"} and permission_reply == "yes":
         if last_question_type == "follow_up_offer" and detected_kind == "plant":
@@ -231,60 +290,21 @@ def classify_intent_with_source(text, config=None, detected_kind=None, last_mess
         if last_question_type == "follow_up_offer" and detected_kind == "plant":
             return Intent.MORE_DETAIL, "rule"
         return confirmation_action(detected_kind), "rule"
-    if text and getattr(config, "use_llm_intent", False):
-        model = getattr(config, "dialogue_model", "gemma3:1b")
-        print(f"dialogue model: {model}")
-        prompt = f"""
-Return JSON only. No markdown. No explanation.
-Allowed actions: EXPLAIN_CURRENT_OBJECT, READ_SIGN_TEXT, EXPLAIN_SIGN_MEANING, IDENTIFY_PLANT, EXPLAIN_PLANT, MORE_DETAIL, DESCRIBE_CURRENT_OBJECT, IDENTIFY_CURRENT_OBJECT, WHAT_AM_I_LOOKING_AT, CANCEL, STOP_LISTENING, REPEAT_LAST_MESSAGE, SPEAK_SLOWER, GENERAL_QUESTION, ASK_CLARIFICATION.
-detected_kind={detected_kind or "unknown"}
-assistant_prompt={last_message!r}
-user_reply={text!r}
-last_assistant_question_type={last_question_type!r}
+    fallback_intent = classify_intent_fallback(text or "", detected_kind, last_question_type)
+    if fallback_intent != Intent.ASK_CLARIFICATION:
+        return fallback_intent, "fallback"
 
-Rules:
-- yes/sure/why not/would be great/that would help/please/just go ahead/go ahead/go on/continue/please continue/okay/yes please/can you do it/do it -> confirmation
-- sounds good/that sounds useful/I would like that/I would appreciate that/go for it/tell me/check it/explain it -> confirmation
-- confirmation + detected_kind=plant -> EXPLAIN_PLANT
-- confirmation + detected_kind=sign -> EXPLAIN_SIGN_MEANING
-- sign + asks what it says -> READ_SIGN_TEXT
-- sign + asks what it means -> EXPLAIN_SIGN_MEANING
-- what plant is this / identify this plant / tell me about this plant -> IDENTIFY_PLANT
-- plant + asks what it is -> EXPLAIN_PLANT
-- general question -> GENERAL_QUESTION
-- try again/check again/look again/scan again/one more time -> IDENTIFY_CURRENT_OBJECT
-- tell me more/more/what else/explain more -> MORE_DETAIL
-- what am I looking at/what is this/describe this/what do you see -> WHAT_AM_I_LOOKING_AT
-- stop/that's enough/no more/be quiet/cancel -> STOP_LISTENING
-- refusal -> CANCEL
-- repeat -> REPEAT_LAST_MESSAGE
-- slower -> SPEAK_SLOWER
-- unclear -> ASK_CLARIFICATION
-
-Examples:
-user_reply="why not", detected_kind=plant -> {{"action":"EXPLAIN_PLANT","target":"plant","should_continue":true,"confidence":0.9}}
-user_reply="why not", detected_kind=sign -> {{"action":"EXPLAIN_SIGN_MEANING","target":"sign","should_continue":true,"confidence":0.9}}
-user_reply="that sounds useful", detected_kind=sign -> {{"action":"EXPLAIN_SIGN_MEANING","target":"sign","should_continue":true,"confidence":0.9}}
-user_reply="I would appreciate that", detected_kind=plant -> {{"action":"EXPLAIN_PLANT","target":"plant","should_continue":true,"confidence":0.9}}
-user_reply="what does it mean", detected_kind=sign -> {{"action":"EXPLAIN_SIGN_MEANING","target":"sign","should_continue":true,"confidence":0.9}}
-user_reply="what does it say", detected_kind=sign -> {{"action":"READ_SIGN_TEXT","target":"sign","should_continue":true,"confidence":0.9}}
-user_reply="no not now", detected_kind=plant -> {{"action":"CANCEL","target":"plant","should_continue":false,"confidence":0.9}}
-user_reply="tell me more", detected_kind=plant -> {{"action":"MORE_DETAIL","target":"plant","should_continue":true,"confidence":0.9}}
-user_reply="what am I looking at", detected_kind=other -> {{"action":"WHAT_AM_I_LOOKING_AT","target":"object","should_continue":true,"confidence":0.9}}
-user_reply="what is photosynthesis", detected_kind=other -> {{"action":"GENERAL_QUESTION","target":"general","should_continue":false,"confidence":0.9}}
-
-Schema:
-{{"action":"EXPLAIN_CURRENT_OBJECT","target":"{detected_kind or 'object'}","should_continue":true,"confidence":0.9}}
-"""
-        data = generate_json(prompt, config, timeout=getattr(config, "ollama_dialogue_timeout", 12), model=model)
-        try:
-            intent = Intent(data.get("action") or data.get("intent"))
-            confidence = float(data.get("confidence", 0))
-            if confidence >= 0.45:
-                return intent, model
-        except Exception:
-            pass
-    return classify_intent_fallback(text or "", detected_kind, last_question_type), "fallback"
+    confirmed_intent = confirm_ambiguous_intent_with_gemini(
+        text or "",
+        config,
+        detected_kind,
+        last_message,
+        last_question_type,
+        interaction_context,
+    )
+    if confirmed_intent is not None:
+        return confirmed_intent, "gemini_intent_confirmation"
+    return Intent.ASK_CLARIFICATION, "fallback"
 
 
 def _demo():

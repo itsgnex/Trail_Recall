@@ -20,6 +20,7 @@ from .config import Config, EXPECTED_MAC_IP
 from .common_tts import AUDIO_DIR, lookup_by_phrase_id, lookup_by_text, template_match, upsert_generated_template
 from . import app_log
 from .intent import Intent, classify_intent_with_source
+from .interaction_pause import interaction_is_paused, pause_interaction, resume_interaction
 from .latency import log_stage, summarize_event
 from .llm import answer_for, answer_general_question_with_1b, describe_current_object
 from .phrases import get_cancel_response, get_clarification_response, get_repeat_response
@@ -59,6 +60,18 @@ def wav_duration_ms(wav: bytes) -> int:
 
 def update_runtime_status(**values):
     _runtime_status.update(values)
+
+
+def update_interaction_pause(path, payload=None):
+    payload = payload or {}
+    reason = _coerce_text(payload.get("reason")) or "android_decision_point"
+    if path == "/interaction/pause":
+        pause_interaction(reason)
+        return {"ok": True, "paused": True, "reason": reason}
+    if path == "/interaction/resume":
+        resume_interaction(reason)
+        return {"ok": True, "paused": interaction_is_paused(), "reason": reason}
+    return None
 
 
 def _default_tts_base_url() -> str:
@@ -347,6 +360,14 @@ class _BackendHandler(BaseHTTPRequestHandler):
 
     def _handle_request(self, is_post: bool):
         parsed = urlparse(self.path)
+        if parsed.path in {"/interaction/pause", "/interaction/resume"}:
+            payload = _payload_from_query(parse_qs(parsed.query))
+            if is_post:
+                content_length = int(self.headers.get("Content-Length", "0") or "0")
+                body = self.rfile.read(content_length) if content_length > 0 else b""
+                payload.update(_payload_from_body(body))
+            _json_response(self, 200, update_interaction_pause(parsed.path, payload))
+            return
         if parsed.path in {"/", "/health"}:
             _json_response(self, 200, {"ok": True, **_runtime_status})
             return

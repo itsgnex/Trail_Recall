@@ -11,6 +11,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import app_log
+
 
 STREAM_SCHEMES = ("http://", "https://", "rtmp://", "rtsp://", "udp://", "srt://")
 DEFAULT_STREAM_WIDTH = 640
@@ -235,6 +237,9 @@ class _OpenCvStreamCamera:
         self._last_frame = None
         self._last_frame_at = 0.0
         self._miss_count = 0
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        self._next_reconnect_at = 0.0
 
     def __enter__(self):
         if not self._open_capture():
@@ -299,15 +304,32 @@ class _OpenCvStreamCamera:
     def read(self):
         frame = self._read_latest_once()
         if frame is not None:
+            if self._reconnecting:
+                print("STREAM connected")
+                self._reconnecting = False
+                self._reconnect_attempt = 0
             self._miss_count = 0
             self._last_frame = frame
             self._last_frame_at = time.monotonic()
             return frame
 
         self._miss_count += 1
-        if self._miss_count in {15, 45}:
-            print(f"MENTRA_STREAM\nfrom=DISCONNECTED\nto=RECONNECTING\nattempt={self._miss_count}")
-            print("stream ingest: reopening OpenCV capture")
+        now = time.monotonic()
+        if self._miss_count >= 15 and now >= self._next_reconnect_at:
+            if not self._reconnecting:
+                print("STREAM disconnected reason=publisher_stopped")
+                try:
+                    from .speech_out import cancel_reply_capture
+
+                    cancel_reply_capture("stream_disconnect")
+                except Exception:
+                    pass
+                self._reconnecting = True
+            self._reconnect_attempt += 1
+            delay = min(8, 2 ** min(self._reconnect_attempt - 1, 3))
+            print(f"STREAM reconnecting attempt={self._reconnect_attempt} nextRetrySeconds={delay}")
+            self._next_reconnect_at = now + delay
+            app_log.debug("stream ingest: reopening OpenCV capture")
             self._open_capture()
         stale = self._stale_frame()
         if stale is not None:
@@ -351,6 +373,7 @@ class _StreamCamera:
         self._restart_count = 0
         self._next_restart_at = 0.0
         self._reported_reconnected = False
+        self._reported_disconnected = False
         self._apply_source_mode(source)
 
     def _apply_source_mode(self, source):
@@ -448,13 +471,14 @@ class _StreamCamera:
             self.process = None
             self.opened = False
             if err:
-                print(f"stream ingest: ffmpeg failed: {err[:240]}")
+                app_log.debug(f"stream ingest ffmpeg failed: {err[:500]}")
             return
         self.opened = self.process.stdout is not None
         self._restart_count += 1
         if self._restart_count > 1:
-            print(f"MENTRA_STREAM\nfrom=DISCONNECTED\nto=RECONNECTING\nattempt={self._restart_count - 1}")
-            print(f"stream ingest: restarted ffmpeg ({self._restart_count - 1} reconnects)")
+            delay = min(8, 2 ** min(self._restart_count - 2, 3))
+            print(f"STREAM reconnecting attempt={self._restart_count - 1} nextRetrySeconds={delay}")
+            app_log.debug(f"stream ingest: restarted ffmpeg ({self._restart_count - 1} reconnects)")
             self._reported_reconnected = False
         else:
             print(f"VIDEO_INGEST\nbackend=ffmpeg\nurl={self.source}\nresolution={self.width}x{self.height}\nfps={self.target_fps}")
@@ -505,7 +529,7 @@ class _StreamCamera:
         if now < self._next_restart_at:
             time.sleep(0.05)
             return self.process is not None and self.process.poll() is None
-        delay = min(5.0, 0.5 * self._restart_count)
+        delay = min(8.0, 2 ** min(max(self._restart_count - 1, 0), 3))
         self._next_restart_at = now + delay
         time.sleep(delay)
         self._start_process()
@@ -520,7 +544,15 @@ class _StreamCamera:
     def read(self):
         raw = self._read_exact(self._frame_size)
         if not raw:
-            print("MENTRA_STREAM\nfrom=CONNECTED\nto=DISCONNECTED\nreason=PUBLISHER_STOPPED")
+            if not self._reported_disconnected:
+                print("STREAM disconnected reason=publisher_stopped")
+                try:
+                    from .speech_out import cancel_reply_capture
+
+                    cancel_reply_capture("stream_disconnect")
+                except Exception:
+                    pass
+                self._reported_disconnected = True
         if not raw and not self._restart_if_needed():
             return self._stale_frame()
         if not raw:
@@ -533,8 +565,9 @@ class _StreamCamera:
         self._last_frame = frame
         self._last_frame_at = time.monotonic()
         if self._restart_count > 1 and not self._reported_reconnected:
-            print("MENTRA_STREAM\nfrom=RECONNECTING\nto=CONNECTED")
+            print("STREAM connected")
             self._reported_reconnected = True
+            self._reported_disconnected = False
         return frame
 
     def _stale_frame(self):
