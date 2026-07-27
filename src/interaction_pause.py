@@ -4,7 +4,7 @@ import time
 from . import app_log
 
 
-INTERACTION_PAUSE_TIMEOUT_SECONDS = 20.0
+INTERACTION_PAUSE_TIMEOUT_SECONDS = 35.0
 _lock = threading.Lock()
 _reason = ""
 _expires_at = 0.0
@@ -40,6 +40,12 @@ def interaction_is_paused():
         _expires_at = 0.0
     print(f"INTERACTION_RESUMED reason={expired_reason} timeout=true")
     return False
+
+
+def interaction_accepts_decision_choice():
+    """Allow only route-choice commands through during Android's decision prompt."""
+    with _lock:
+        return _reason == "android_decision_point" and time.monotonic() < _expires_at
 
 
 def log_interaction_skip(event):

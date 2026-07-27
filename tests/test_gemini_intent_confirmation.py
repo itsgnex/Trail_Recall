@@ -31,14 +31,14 @@ class GeminiIntentConfirmationTests(unittest.TestCase):
         send.assert_called_once_with("start", self.config)
         self.assertIn("Interaction type: wake_command", generate.call_args.args[0])
 
-    def test_high_confidence_navigate_back_uses_existing_trail_handler(self):
+    def test_high_confidence_navigate_back_leaves_initial_guidance_to_android(self):
         with patch("src.intent.generate_openrouter", return_value='{"intent":"NAVIGATE_BACK","confidence":0.91}'), patch(
             "main.send_trail_command", return_value=(True, "navigate-back")
         ), patch("main.speak") as speak:
             intent, _ = classify_intent_with_source("take me", self.config)
             handled = main.handle_trail_intent(intent, self.config, SessionState())
         self.assertTrue(handled)
-        speak.assert_called_once()
+        speak.assert_not_called()
 
     def test_low_confidence_preserves_clarification(self):
         with patch("src.intent.generate_openrouter", return_value='{"intent":"START_TRAIL","confidence":0.88}'):

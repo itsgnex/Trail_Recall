@@ -53,6 +53,7 @@ class BridgeStartupTests(unittest.TestCase):
         self.assertEqual(is_trail_command("record my route"), Intent.START_TRAIL)
         self.assertEqual(is_trail_command("stop recording"), Intent.STOP_TRAIL)
         self.assertEqual(is_trail_command("take me back"), Intent.NAVIGATE_BACK)
+        self.assertEqual(is_trail_command("take saved path"), Intent.CHOOSE_SAVED_ROUTE)
         self.assertEqual(is_trail_command("choose left"), Intent.CHOOSE_LEFT)
         self.assertEqual(is_trail_command("choose right"), Intent.CHOOSE_RIGHT)
         self.assertEqual(is_trail_command("I reached the destination"), Intent.DESTINATION_REACHED)

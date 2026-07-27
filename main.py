@@ -13,7 +13,7 @@ from src.camera import Camera, split_stream_urls, wait_for_publisher
 from src.config import Config
 from src.latency import log_stage, new_interaction, set_interaction
 from src.intent import Intent, classify_intent_with_source
-from src.interaction_pause import interaction_is_paused, log_interaction_skip
+from src.interaction_pause import interaction_accepts_decision_choice, interaction_is_paused, log_interaction_skip
 from src.clip_classifier import get_crop_embedding
 from src.llm import answer_for, answer_general_question_with_1b, describe_current_object, generate_more_detail_response
 from src.ocr import read_text
@@ -344,7 +344,7 @@ def maybe_suppress_sign_prompt(crop, crop_path, config, state):
     return False, None, embedding, None
 
 
-def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text="", record_seconds=None):
+def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text="", record_seconds=None, silence_ms=None):
     if interaction_is_paused():
         log_interaction_skip("FOLLOW_UP_SKIPPED")
         return "", None, None
@@ -358,7 +358,7 @@ def listen_for_follow_up_reply(prompt, config, state, detected_kind, ocr_text=""
             record_seconds=record_seconds or getattr(config, "follow_up_timeout_seconds", 1.5),
             label="recording follow-up",
             after_tts=True,
-            silence_ms=getattr(config, "follow_up_silence_ms", 300),
+            silence_ms=silence_ms if silence_ms is not None else getattr(config, "follow_up_silence_ms", 300),
         )
         if not heard:
             return "", None, None
@@ -399,9 +399,23 @@ def _clarification_for_context(state, transcript=""):
             return "Would you like me to read the sign?"
         if state.last_detected_kind == "plant":
             return "Would you like me to identify the plant?"
-    if state.trail_recording_active or any(word in (transcript or "").lower() for word in ("trail", "route", "back", "record", "start")):
+    if state.trail_recording_active:
+        return "Would you like me to end the trail or take you back?"
+    if any(word in (transcript or "").lower() for word in ("trail", "route", "back", "record", "start")):
         return "Would you like me to start the trail or take you back?"
     return get_clarification_response()
+
+
+def _navigation_choice_settings(prompt, config):
+    if "trail or take you back" in (prompt or "").lower():
+        return (
+            getattr(config, "navigation_reply_seconds", 5.0),
+            getattr(config, "navigation_reply_silence_ms", 900),
+        )
+    return (
+        getattr(config, "follow_up_timeout_seconds", 1.5),
+        getattr(config, "follow_up_silence_ms", 300),
+    )
 
 
 def handle_trail_intent(intent, config, state=None):
@@ -429,7 +443,8 @@ def handle_trail_intent(intent, config, state=None):
                 state.trail_recording_active = True
             elif state is not None and intent == Intent.STOP_TRAIL:
                 state.trail_recording_active = False
-            speak(confirmation(), trail_command=True)
+            if intent != Intent.NAVIGATE_BACK:
+                speak(confirmation(), trail_command=True)
         elif not ok:
             speak(format_trail_error(detail), trail_command=intent in trail_confirmations)
         return True
@@ -437,7 +452,8 @@ def handle_trail_intent(intent, config, state=None):
 
 
 def handle_voice_command(transcript, config, state, camera):
-    if interaction_is_paused():
+    decision_choice_only = interaction_accepts_decision_choice()
+    if interaction_is_paused() and not decision_choice_only:
         log_interaction_skip("VOICE_COMMAND_SKIPPED")
         return
     state.is_busy = True
@@ -463,6 +479,35 @@ def handle_voice_command(transcript, config, state, camera):
             getattr(config, "allow_single_word_wake", False),
         )
         command = (command or "").strip()
+        if decision_choice_only:
+            if not command:
+                speak("Yes?")
+                command = listen(
+                    config,
+                    typed_fallback=False,
+                    record_seconds=getattr(config, "command_record_seconds", 3.5),
+                    label="recording decision choice",
+                    after_tts=True,
+                )
+                command = strip_wake_phrase(
+                    command,
+                    getattr(config, "wake_phrases", ()),
+                    getattr(config, "allow_single_word_wake", False),
+                ).strip()
+            intent, source = classify_intent_with_source(
+                command,
+                config,
+                state.last_detected_kind,
+                state.last_prompt or "",
+                last_question_type="none",
+                interaction_context=_intent_context(state, "android_decision_point"),
+            )
+            if intent in {Intent.CHOOSE_SAVED_ROUTE, Intent.CHOOSE_ALTERNATE_ROUTE}:
+                print(f"DECISION_GLASSES_COMMAND intent={intent.value} source={source}")
+                handle_trail_intent(intent, config, state)
+            else:
+                log_interaction_skip("DECISION_COMMAND_SKIPPED")
+            return
         if is_wake_check_command(command):
             speak(get_wake_check_response())
             return
@@ -560,6 +605,7 @@ def handle_voice_command(transcript, config, state, camera):
             return
 
         clarification_prompt = _clarification_for_context(state, command)
+        reply_seconds, reply_silence_ms = _navigation_choice_settings(clarification_prompt, config)
         state.awaiting_follow_up_reply = True
         speak(clarification_prompt)
         heard, follow_up_intent, follow_up_source = listen_for_follow_up_reply(
@@ -568,8 +614,20 @@ def handle_voice_command(transcript, config, state, camera):
             state,
             state.last_detected_kind,
             state.last_prompt or "",
-            record_seconds=getattr(config, "follow_up_timeout_seconds", 1.5),
+            record_seconds=reply_seconds,
+            silence_ms=reply_silence_ms,
         )
+        if follow_up_intent is None and reply_seconds == getattr(config, "navigation_reply_seconds", 5.0):
+            speak("Please say end the trail or take you back.")
+            heard, follow_up_intent, follow_up_source = listen_for_follow_up_reply(
+                clarification_prompt,
+                config,
+                state,
+                state.last_detected_kind,
+                state.last_prompt or "",
+                record_seconds=reply_seconds,
+                silence_ms=reply_silence_ms,
+            )
         if follow_up_intent is None:
             state.last_assistant_question_type = "none"
             state.awaiting_follow_up_reply = False
@@ -648,7 +706,7 @@ def wake_listener_loop(config, state, wake_queue, stop_event):
     if not (getattr(config, "voice_activation_mode", True) or getattr(config, "wake_mode", False)):
         return
     while not stop_event.is_set():
-        if interaction_is_paused():
+        if interaction_is_paused() and not interaction_accepts_decision_choice():
             log_interaction_skip("WAKE_SKIPPED")
             time.sleep(0.1)
             continue

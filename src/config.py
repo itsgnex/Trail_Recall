@@ -92,6 +92,8 @@ class Config:
     follow_up_mode: bool = True
     follow_up_timeout_seconds: float = 1.5
     follow_up_silence_ms: int = 300
+    navigation_reply_seconds: float = 5.0
+    navigation_reply_silence_ms: int = 900
     confirmation_record_seconds: float = 2.0
     confirmation_silence_ms: int = 350
     max_follow_up_turns: int = 2
@@ -266,6 +268,8 @@ class Config:
             follow_up_mode=env_bool("FOLLOW_UP_MODE", True),
             follow_up_timeout_seconds=float(os.getenv("FOLLOW_UP_RECORD_SECONDS", os.getenv("FOLLOW_UP_TIMEOUT_SECONDS", "1.5"))),
             follow_up_silence_ms=int(os.getenv("FOLLOW_UP_SILENCE_MS", "300")),
+            navigation_reply_seconds=float(os.getenv("NAVIGATION_REPLY_SECONDS", "5")),
+            navigation_reply_silence_ms=int(os.getenv("NAVIGATION_REPLY_SILENCE_MS", "900")),
             confirmation_record_seconds=float(os.getenv("CONFIRMATION_RECORD_SECONDS", "2")),
             confirmation_silence_ms=int(os.getenv("CONFIRMATION_SILENCE_MS", "350")),
             max_follow_up_turns=int(os.getenv("MAX_FOLLOW_UP_TURNS", "2")),

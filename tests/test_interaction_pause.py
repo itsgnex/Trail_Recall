@@ -6,7 +6,12 @@ import numpy as np
 
 from src.audio_http import update_interaction_pause
 from src.config import Config
-from src.interaction_pause import interaction_is_paused, pause_interaction, reset_interaction_pause_for_tests
+from src.interaction_pause import (
+    interaction_accepts_decision_choice,
+    interaction_is_paused,
+    pause_interaction,
+    reset_interaction_pause_for_tests,
+)
 from src.session_state import SessionState
 import main
 
@@ -33,6 +38,22 @@ class InteractionPauseTests(unittest.TestCase):
         with patch("main.speak") as speak:
             main.handle_voice_command("hey trail start the trail", Config(), SessionState(), camera=None)
         speak.assert_not_called()
+
+    def test_glasses_saved_route_command_is_allowed_during_android_decision_pause(self):
+        pause_interaction("android_decision_point")
+        self.assertTrue(interaction_accepts_decision_choice())
+        with patch("main.send_trail_command", return_value=(True, "choose-saved-route")) as send:
+            main.handle_voice_command("hey trail take saved path", Config(), SessionState(), camera=None)
+        send.assert_called_once_with("choose-saved-route", unittest.mock.ANY)
+
+    def test_bare_wake_at_decision_point_answers_then_accepts_saved_route(self):
+        pause_interaction("android_decision_point")
+        with patch("main.listen", return_value="take saved path"), patch("main.speak") as speak, patch(
+            "main.send_trail_command", return_value=(True, "choose-saved-route")
+        ) as send:
+            main.handle_voice_command("hey trail", Config(), SessionState(), camera=None)
+        speak.assert_called_once_with("Yes?")
+        send.assert_called_once_with("choose-saved-route", unittest.mock.ANY)
 
     def test_plant_and_sign_prompts_are_skipped_while_paused(self):
         pause_interaction()

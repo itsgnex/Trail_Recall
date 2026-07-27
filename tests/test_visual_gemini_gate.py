@@ -42,6 +42,10 @@ class VisualGeminiGateTests(unittest.TestCase):
         self.assertEqual(main._vision_kind_for_intent(Intent.READ_SIGN_TEXT), "sign")
         self.assertEqual(main._vision_kind_for_intent(Intent.IDENTIFY_PLANT), "plant")
 
+    def test_navigation_choice_uses_longer_noise_tolerant_capture(self):
+        settings = main._navigation_choice_settings("Would you like me to end the trail or take you back?", Config())
+        self.assertEqual(settings, (5.0, 900))
+
 
 if __name__ == "__main__":
     unittest.main()

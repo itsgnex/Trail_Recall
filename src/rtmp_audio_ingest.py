@@ -82,7 +82,7 @@ class RtmpAudioIngest:
             "-ar",
             "16000",
             "-af",
-            "aresample=async=1:first_pts=0,asetpts=N/SR/TB",
+            "highpass=f=140,afftdn,aresample=async=1:first_pts=0,asetpts=N/SR/TB",
             "-acodec",
             "pcm_s16le",
             "-f",

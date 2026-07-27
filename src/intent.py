@@ -114,7 +114,7 @@ def is_trail_command(text):
         return Intent.CHOOSE_LEFT
     if re.search(r"\b(choose right|go right|take right|right option)\b", text):
         return Intent.CHOOSE_RIGHT
-    if re.search(r"\b(choose saved route|saved route|use saved route)\b", text):
+    if re.search(r"\b(choose saved route|saved route|use saved route|take( the)? saved (path|route)|take the recorded route|go the way i came|go back the same way)\b", text):
         return Intent.CHOOSE_SAVED_ROUTE
     if re.search(r"\b(choose alternate route|alternate route|use alternate route)\b", text):
         return Intent.CHOOSE_ALTERNATE_ROUTE
@@ -125,6 +125,11 @@ def _normalize_trail_text(text):
     text = (text or "").lower()
     text = re.sub(r"[^\w\s']", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def is_explicit_stop_listening(text):
+    normalized = _normalize_trail_text(text)
+    return normalized in {"stop", "stop listening", "be quiet", "cancel", "thats enough", "that's enough", "no more"}
 
 
 def classify_intent_fallback(text, detected_kind=None, last_question_type="none"):
@@ -147,13 +152,13 @@ def classify_intent_fallback(text, detected_kind=None, last_question_type="none"
         trail_intent = is_trail_command(text)
         if trail_intent is not None:
             return trail_intent
-        return Intent.STOP_LISTENING
+        return Intent.STOP_LISTENING if is_explicit_stop_listening(text) else Intent.ASK_CLARIFICATION
     if permission_reply == "repeat":
         return Intent.REPEAT_LAST_MESSAGE
     if is_retry_request(text):
         return Intent.IDENTIFY_CURRENT_OBJECT
     if has(text, r"\b(stop|that'?s enough|no more|be quiet|cancel)\b"):
-        return Intent.STOP_LISTENING
+        return Intent.STOP_LISTENING if is_explicit_stop_listening(text) else Intent.ASK_CLARIFICATION
     if has(text, r"\b(no|nope|not now|leave it|i'?m good|i am good|don't|do not)\b"):
         return Intent.CANCEL
     if has(text, r"\b(repeat|again|say that|one more time)\b"):
@@ -262,7 +267,9 @@ def classify_intent_with_source(text, config=None, detected_kind=None, last_mess
         trail_intent = is_trail_command(text)
         if trail_intent is not None:
             return trail_intent, "trail_rule"
-        return Intent.STOP_LISTENING, "permission_rule"
+        if is_explicit_stop_listening(text):
+            return Intent.STOP_LISTENING, "permission_rule"
+        return Intent.ASK_CLARIFICATION, "permission_rule"
     if text and permission_reply == "repeat":
         return Intent.REPEAT_LAST_MESSAGE, "permission_rule"
     if text and is_retry_request(text):
